@@ -1,153 +1,12 @@
-import firebase_admin
-from firebase_admin import credentials, storage, db
-from fpdf import FPDF
-from PyQt6 import QtWidgets, QtCore
-from PyQt6.QtWidgets import QFileDialog, QMessageBox
-from email.mime.text import MIMEText
-import smtplib
-import random
-from dateutil import parser
-import string
-from datetime import datetime
-import requests
-import hashlib
+import fitz  # PyMuPDF
+from PIL import Image
+from reportlab.pdfgen import canvas
+from reportlab.lib.utils import ImageReader
+import re
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
+import numpy as np
 import os
-from PyPDF2 import PdfReader, PdfWriter
-
-cred = credentials.Certificate('/Users/LakshSarda/Downloads/csia-acb9d-firebase-adminsdk-3rgsb-e4a48f992c.json')
-firebase_admin.initialize_app(cred, {
-    'databaseURL': 'https://csia-acb9d-default-rtdb.firebaseio.com',
-    'storageBucket': 'csia-acb9d.appspot.com'
-})
-
-def hash_password(password):
-    return hashlib.sha256(password.encode()).hexdigest()
-
-class AccessCodeDialog(QtWidgets.QDialog):
-    def __init__(self):
-        super().__init__()
-        self.setWindowTitle("Enter Access Code")
-        self.setGeometry(100, 100, 400, 200)
-        layout = QtWidgets.QVBoxLayout()
-
-        self.access_code_input = QtWidgets.QLineEdit()
-        self.access_code_input.setPlaceholderText("Enter Access Code")
-        layout.addWidget(self.access_code_input)
-
-        self.verify_button = QtWidgets.QPushButton("Verify")
-        self.verify_button.clicked.connect(self.verify_access_code)
-        layout.addWidget(self.verify_button)
-
-        self.setLayout(layout)
-
-    def verify_access_code(self):
-        access_code = self.access_code_input.text()
-        if access_code:
-            try:
-                response = requests.post('http://127.0.0.1:5000/verify_access_code', json={'access_code': access_code})
-                response.raise_for_status()
-                response_json = response.json()
-                if response.status_code == 200:
-                    QtWidgets.QMessageBox.information(self, "Success", "Access granted.")
-                    self.accept()
-                else:
-                    QtWidgets.QMessageBox.warning(self, "Error", response_json.get('message', 'Invalid or expired access code.'))
-            except requests.exceptions.RequestException as e:
-                QtWidgets.QMessageBox.warning(self, "Error", f"Server error: {e}")
-            except requests.exceptions.JSONDecodeError:
-                QtWidgets.QMessageBox.warning(self, "Error", "Invalid response from server.")
-        else:
-            QtWidgets.QMessageBox.warning(self, "Error", "Access code is required.")
-
-class HelpPage(QtWidgets.QWidget):
-    def __init__(self):
-        super().__init__()
-        self.setWindowTitle("Help")
-        self.setGeometry(100, 100, 600, 400)
-        layout = QtWidgets.QVBoxLayout()
-        label = QtWidgets.QLabel("Help Information:\nThis is a detailed help page with instructions on how to use the application.")
-        layout.addWidget(label)
-        self.setLayout(layout)
-
-class AboutPage(QtWidgets.QWidget):
-    def __init__(self):
-        super().__init__()
-        self.setWindowTitle("About")
-        self.setGeometry(100, 100, 600, 400)
-        layout = QtWidgets.QVBoxLayout()
-        label = QtWidgets.QLabel("About this Application:\nVersion 1.0\nDeveloped by: Your Name")
-        layout.addWidget(label)
-        self.setLayout(layout)
-
-class ResetPasswordDialog(QtWidgets.QDialog):
-    def __init__(self, email):
-        super().__init__()
-        self.email = email
-        self.setWindowTitle("Reset Password")
-        self.setGeometry(100, 100, 400, 300)
-        layout = QtWidgets.QVBoxLayout()
-
-        self.otp_input = QtWidgets.QLineEdit()
-        self.otp_input.setPlaceholderText("Enter OTP")
-        layout.addWidget(self.otp_input)
-
-        self.verify_otp_button = QtWidgets.QPushButton("Verify OTP")
-        self.verify_otp_button.clicked.connect(self.verify_otp)
-        layout.addWidget(self.verify_otp_button)
-
-        self.new_password_input = QtWidgets.QLineEdit()
-        self.new_password_input.setEchoMode(QtWidgets.QLineEdit.EchoMode.Password)
-        self.new_password_input.setPlaceholderText("New Password")
-        self.new_password_input.setEnabled(False)
-        layout.addWidget(self.new_password_input)
-
-        self.confirm_password_input = QtWidgets.QLineEdit()
-        self.confirm_password_input.setEchoMode(QtWidgets.QLineEdit.EchoMode.Password)
-        self.confirm_password_input.setPlaceholderText("Confirm New Password")
-        self.confirm_password_input.setEnabled(False)
-        layout.addWidget(self.confirm_password_input)
-
-        self.reset_password_button = QtWidgets.QPushButton("Reset Password")
-        self.reset_password_button.clicked.connect(self.reset_password)
-        self.reset_password_button.setEnabled(False)
-        layout.addWidget(self.reset_password_button)
-
-        self.setLayout(layout)
-
-    def verify_otp(self):
-        otp = self.otp_input.text()
-        if otp:
-            ref = db.reference('otps')
-            otps = ref.order_by_child('email').equal_to(self.email).get()
-            for otp_key, otp_value in otps.items():
-                if otp_value['otp'] == otp:
-                    QMessageBox.information(self, "OTP Verified", "OTP has been successfully verified.")
-                    ref.child(otp_key).delete()
-                    self.otp_input.setEnabled(False)
-                    self.verify_otp_button.setEnabled(False)
-                    self.new_password_input.setEnabled(True)
-                    self.confirm_password_input.setEnabled(True)
-                    self.reset_password_button.setEnabled(True)
-                    return
-            QMessageBox.warning(self, "Verification Failed", "Invalid OTP.")
-        else:
-            QMessageBox.warning(self, "Input Error", "OTP is required.")
-
-    def reset_password(self):
-        new_password = self.new_password_input.text()
-        confirm_password = self.confirm_password_input.text()
-        if new_password and confirm_password:
-            if new_password == confirm_password:
-                hashed_password = hash_password(new_password)
-                ref = db.reference('users').order_by_child('email').equal_to(self.email).get()
-                for user_key, user_value in ref.items():
-                    db.reference(f'users/{user_key}').update({'password': hashed_password})
-                QMessageBox.information(self, "Success", "Password has been reset successfully.")
-                self.accept()
-            else:
-                QMessageBox.warning(self, "Input Error", "Passwords do not match.")
-        else:
-            QMessageBox.warning(self, "Input Error", "Both fields are required.")
 
 syllabus_details = [
     ["1 States of matter",
@@ -527,301 +386,162 @@ syllabus_details = [
 ]
 
 
-class MainPage(QtWidgets.QWidget):
-    def __init__(self):
-        super().__init__()
-        self.initUI()
+def extract_question(pdf_path, question_number, output_image_path):
+    doc = fitz.open(pdf_path)
+    question_found = False
 
-    def initUI(self):
-        layout = QtWidgets.QVBoxLayout()
+    # Compile regex to match the question number and the next number
+    question_regex = re.compile(rf'^{question_number}\s+.*', re.MULTILINE)
+    next_question_regex = re.compile(r'^\d+\s+.*', re.MULTILINE)
 
-        self.question_paper_button = QtWidgets.QPushButton("Generate Question Paper")
-        self.question_paper_button.setMinimumHeight(80)
-        self.question_paper_button.setStyleSheet(self.get_button_style())
-        layout.addWidget(self.question_paper_button)
-        self.question_paper_button.clicked.connect(self.show_paper_generation_options)
+    for page_num in range(1, doc.page_count - 1):  # Skip first and last page
+        page = doc.load_page(page_num)
+        text = page.get_text("text")
+        
+        # Find the question number
+        question_match = question_regex.search(text)
+        if question_match:
+            question_found = True
+            start_pos = question_match.start()
+            
+            # Find the next question number
+            next_question_match = next_question_regex.search(text, pos=start_pos + len(question_match.group(0)))
+            end_pos = next_question_match.start() if next_question_match else len(text)
+            
+            # Extract the bounding boxes for the text
+            text_instances = page.search_for(text[start_pos:end_pos])
+            if text_instances:
+                rect = fitz.Rect(text_instances[0])
+                for inst in text_instances[1:]:
+                    rect |= inst
 
-        self.help_button = QtWidgets.QPushButton("Help")
-        self.help_button.setMinimumHeight(80)
-        self.help_button.setStyleSheet(self.get_button_style())
-        layout.addWidget(self.help_button)
-        self.help_button.clicked.connect(self.open_help_page)
+                pix = page.get_pixmap(clip=rect)
+                img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+                img.save(output_image_path)
+                return output_image_path
 
-        self.about_button = QtWidgets.QPushButton("About")
-        self.about_button.setMinimumHeight(80)
-        self.about_button.setStyleSheet(self.get_button_style())
-        layout.addWidget(self.about_button)
-        self.about_button.clicked.connect(self.open_about_page)
+    return None
 
-        self.setLayout(layout)
+def create_pdf_from_images(images, output_pdf_path):
+    if not images:
+        return
 
-    def get_button_style(self):
-        return """
-            QPushButton {
-                background-color: #5A5A5A;
-                color: #FFFFFF;
-                padding: 15px 30px;
-                border-radius: 10px;
-                font-size: 16px;
-                font-weight: bold;
-                border: 2px solid #5A5A5A;
-            }
-            QPushButton:hover {
-                background-color: #34ebb1;
-                border: 2px solid #34ebb1;
-            }
-            QPushButton:pressed {
-                background-color: #34ebb1;
-                border: 2px solid #34ebb1;
-            }
-        """
+    c = canvas.Canvas(output_pdf_path)
+    for image_path in images:
+        img = Image.open(image_path)
+        img_width, img_height = img.size
+        c.setPageSize((img_width, img_height))
+        c.drawImage(ImageReader(img), 0, 0, width=img_width, height=img_height)
+        c.showPage()
+    c.save()
 
-    def open_help_page(self):
-        self.help_page = HelpPage()
-        self.help_page.show()
+def get_syllabus_details(unit_number):
+    for section in syllabus_details:
+        for unit in section[1:]:
+            if unit[0].startswith(unit_number):
+                return unit[1]
+    return []
 
-    def open_about_page(self):
-        self.about_page = AboutPage()
-        self.about_page.show()
+def compare_questions_to_syllabus(syllabus_details, questions):
+    vectorizer = TfidfVectorizer().fit_transform(syllabus_details + questions)
+    vectors = vectorizer.toarray()
 
-    def show_paper_generation_options(self):
-        self.paper_gen_window = PaperGenerationWindow()
-        self.paper_gen_window.show()
+    syllabus_vecs = vectors[:len(syllabus_details)]
+    question_vecs = vectors[len(syllabus_details):]
 
-class PaperGenerationWindow(QtWidgets.QWidget):
-    def __init__(self):
-        super().__init__()
-        self.setWindowTitle("Paper Generation")
-        self.setGeometry(100, 100, 800, 600)
-        layout = QtWidgets.QVBoxLayout()
+    matched_questions = []
+    for i, question_vec in enumerate(question_vecs):
+        similarities = cosine_similarity([question_vec], syllabus_vecs)
+        max_similarity = np.max(similarities)
+        if max_similarity > 0.2:  # Adjust the threshold as needed
+            matched_questions.append((i + 1, max_similarity))
+    
+    return matched_questions
 
-        self.generate_paper_button = QtWidgets.QPushButton("Generate Paper (MCQ)")
-        self.generate_paper_button.setMinimumHeight(80)
-        self.generate_paper_button.setStyleSheet(self.get_button_style())
-        self.generate_paper_button.clicked.connect(self.generate_paper)
-        layout.addWidget(self.generate_paper_button)
+def extract_text_from_pdf(pdf_path):
+    doc = fitz.open(pdf_path)
+    questions = []
+    for page_num in range(1, doc.page_count - 1):  # Skip first and last page
+        page = doc.load_page(page_num)
+        text = page.get_text("text")
+        questions.extend(re.findall(r'^\d+\s+.*', text, re.MULTILINE))
+    return questions
 
-        self.setLayout(layout)
+def user_approve_image(image_path):
+    img = Image.open(image_path)
+    img.show()
 
-    def get_button_style(self):
-        return """
-            QPushButton {
-                background-color: #5A5A5A;
-                color: #FFFFFF;
-                padding: 15px 30px;
-                border-radius: 10px;
-                font-size: 16px;
-                font-weight: bold;
-                border: 2px solid #5A5A5A;
-            }
-            QPushButton:hover {
-                background-color: #34ebb1;
-                border: 2px solid #34ebb1;
-            }
-            QPushButton:pressed {
-                background-color: #34ebb1;
-                border: 2px solid #34ebb1;
-            }
-        """
+    user_input = input("Approve this image? (yes/no): ").strip().lower()
+    return user_input == "yes"
 
-    def generate_paper(self):
-        self.paper_window = PaperWindow()
-        self.paper_window.show()
+def main():
+    past_papers_dir = "past_papers"
+    output_pdf_path = "filtered_questions.pdf"
+    total_marks = 0
+    units_and_marks = []
 
-class PaperWindow(QtWidgets.QWidget):
-    def __init__(self):
-        super().__init__()
-        self.setWindowTitle("Generate Paper")
-        self.setGeometry(100, 100, 800, 600)
-        self.total_marks = 0
-        self.weightages = []
-        self.topics = []
-
-        layout = QtWidgets.QVBoxLayout()
-
-        self.marks_input = QtWidgets.QLineEdit()
-        self.marks_input.setPlaceholderText("Enter number of marks the paper should be for:")
-        self.marks_input.setMinimumHeight(35)
-        self.marks_input.textChanged.connect(self.update_marks)
-        layout.addWidget(self.marks_input)
-
-        layout.addSpacerItem(QtWidgets.QSpacerItem(20, 50))
-
-        self.topic_choice = QtWidgets.QComboBox()
-        self.topic_choice.addItems(self.get_all_topics())
-        self.topic_choice.setMinimumHeight(50)
-        layout.addWidget(self.topic_choice)
-
-        layout.addSpacerItem(QtWidgets.QSpacerItem(20, 50))
-
-        self.weightage_input = QtWidgets.QLineEdit()
-        self.weightage_input.setPlaceholderText("Enter weightage of topic:")
-        self.weightage_input.setMinimumHeight(35)
-        layout.addWidget(self.weightage_input)
-
-        layout.addSpacerItem(QtWidgets.QSpacerItem(20, 50))
-
-        self.add_topic_button = QtWidgets.QPushButton("Add new topic")
-        self.add_topic_button.setMinimumHeight(50)
-        self.add_topic_button.setStyleSheet(self.get_button_style())
-        self.add_topic_button.clicked.connect(self.add_topic)
-        layout.addWidget(self.add_topic_button)
-
-        layout.addSpacerItem(QtWidgets.QSpacerItem(20, 50))
-
-        self.marks_generated_label = QtWidgets.QLabel("Marks generated: 0")
-        layout.addWidget(self.marks_generated_label)
-
-        self.marks_remaining_label = QtWidgets.QLabel("Marks remaining: 0")
-        layout.addWidget(self.marks_remaining_label)
-
-        layout.addSpacerItem(QtWidgets.QSpacerItem(20, 50))
-
-        self.process_button = QtWidgets.QPushButton("Process")
-        self.process_button.setStyleSheet(self.get_button_style())
-        self.process_button.setMinimumHeight(50)
-        self.process_button.setEnabled(False)
-        self.process_button.clicked.connect(self.process_paper)
-        layout.addWidget(self.process_button)
-
-        layout.addSpacerItem(QtWidgets.QSpacerItem(20, 50))
-
-        self.restart_button = QtWidgets.QPushButton("Restart Generation")
-        self.restart_button.setMinimumHeight(50)
-        self.restart_button.setStyleSheet(self.get_button_style())
-        self.restart_button.clicked.connect(self.restart_generation)
-        layout.addWidget(self.restart_button)
-
-        self.setLayout(layout)
-
-    def get_button_style(self):
-        return """
-            QPushButton {
-                background-color: #5A5A5A;
-                color: #FFFFFF;
-                padding: 15px 30px;
-                border-radius: 10px;
-                font-size: 16px;
-                font-weight: bold;
-                border: 2px solid #5A5A5A;
-            }
-            QPushButton:hover {
-                background-color: #34ebb1;
-                border: 2px solid #34ebb1;
-            }
-            QPushButton:pressed {
-                background-color: #34ebb1;
-                border: 2px solid #34ebb1;
-            }
-        """
-
-    def get_all_topics(self):
-        topics = []
-        for topic in syllabus_details:
-            for subtopic in topic[1:]:
-                topics.append(subtopic[0])
-        return topics
-
-    def update_marks(self):
-        try:
-            self.total_marks = int(self.marks_input.text())
-        except ValueError:
-            self.total_marks = 0
-        self.update_marks_remaining()
-
-    def add_topic(self):
-        try:
-            weightage = int(self.weightage_input.text())
-            topic = self.topic_choice.currentText()
-        except ValueError:
-            QMessageBox.warning(self, "Input Error", "Please enter a valid number for weightage.")
-            return
-
-        potential_marks_generated = (sum(self.weightages) + weightage) / 100 * self.total_marks
-
-        if potential_marks_generated > self.total_marks:
-            QMessageBox.warning(self, "Input Error", "You are trying to create a paper for more marks than you asked for!")
-            return
-
-        self.weightages.append(weightage)
-        self.topics.append(topic)
-        self.update_marks_remaining()
-
-        if sum(self.weightages) == 100:
-            self.process_button.setEnabled(True)
+    while total_marks < 10:
+        unit_number = input(f"Enter the unit number (e.g., 1.1, 2.2) (Remaining marks: {10 - total_marks}): ")
+        marks = int(input(f"Enter the number of marks for unit {unit_number} (Remaining marks: {10 - total_marks}): "))
+        if total_marks + marks > 10:
+            print("Total marks cannot exceed 10. Try again.")
         else:
-            self.process_button.setEnabled(False)
+            total_marks += marks
+            units_and_marks.append((unit_number, marks))
 
-    def update_marks_remaining(self):
-        marks_generated = (sum(self.weightages) / 100) * self.total_marks
-        self.marks_generated_label.setText(f"Marks generated: {marks_generated:.2f}")
-        marks_remaining = self.total_marks - marks_generated
-        self.marks_remaining_label.setText(f"Marks remaining: {marks_remaining:.2f}")
+    processed_questions = set()
+    images = []
 
-    def process_paper(self):
-        file_dialog = QFileDialog()
-        options = file_dialog.options()
-        filename, _ = file_dialog.getSaveFileName(self, "Save PDF", "", "PDF Files (*.pdf);;All Files (*)", options=options)
-        if filename:
-            self.generate_pdf(filename)
-            self.upload_to_firebase(filename)
-            QMessageBox.information(self, "Success", f"PDF generated and uploaded as {os.path.basename(filename)}")
+    for unit_number, marks in units_and_marks:
+        syllabus_details_for_unit = get_syllabus_details(unit_number)
+        if not syllabus_details_for_unit:
+            print(f"No syllabus details found for unit {unit_number}")
+            continue
 
-    def generate_pdf(self, filename):
-        pdf_writer = PdfWriter()
-        pdf_reader = PdfReader()  # Create an empty reader for concatenation
+        remaining_marks = marks
+        for pdf_file in os.listdir(past_papers_dir):
+            if remaining_marks == 0:
+                break
 
-        past_papers_dir = "past_papers"  # Path to the directory containing past papers
-        past_papers = [os.path.join(past_papers_dir, f) for f in os.listdir(past_papers_dir) if f.endswith('.pdf')]
+            pdf_path = os.path.join(past_papers_dir, pdf_file)
+            questions = extract_text_from_pdf(pdf_path)
+            matched_questions = compare_questions_to_syllabus(syllabus_details_for_unit, questions)
+            if not matched_questions:
+                print(f"No matching questions found in {pdf_file} for unit {unit_number}")
+                continue
 
-        questions_added = []
+            matched_questions.sort(key=lambda x: x[1], reverse=True)
+            selected_questions = [q for q in matched_questions if q[0] not in processed_questions][:remaining_marks]
 
-        for topic, weightage in zip(self.topics, self.weightages):
-            marks_needed = (weightage / 100) * self.total_marks
-            marks_added = 0
+            for question_number, similarity in selected_questions:
+                if question_number > 40:  # Ensure question number doesn't exceed the total number of questions
+                    continue
+                print(f"Question {question_number} from {pdf_file} matched with similarity score: {similarity:.2f}")
+                image_path = f"question_{question_number}.png"
+                extracted_image = extract_question(pdf_path, question_number, image_path)
+                if extracted_image:
+                    img = Image.open(extracted_image)
+                    if img.height / img.width > 1.5:  # Example check for aspect ratio anomalies
+                        print(f"Question {question_number} image seems anomalous, skipping.")
+                        continue
 
-            for paper in past_papers:
-                if marks_added >= marks_needed:
-                    break
+                    # Approve image if similarity is below a certain threshold
+                    if similarity < 0.4:
+                        if user_approve_image(extracted_image):
+                            images.append(image_path)
+                        else:
+                            continue
+                    else:
+                        images.append(image_path)
+                    processed_questions.add(question_number)
+                    remaining_marks -= 1
 
-                pdf_reader = PdfReader(paper)
-                for page_num in range(len(pdf_reader.pages)):
-                    page = pdf_reader.pages[page_num]
-                    text = page.extract_text()
+    create_pdf_from_images(images, output_pdf_path)
+    print(f"Filtered questions saved to {output_pdf_path}")
 
-                    if topic in text and page_num not in questions_added:
-                        pdf_writer.add_page(page)
-                        questions_added.append(page_num)
-                        marks_added += self.calculate_marks(page)
-                        if marks_added >= marks_needed:
-                            break
-
-        with open(filename, 'wb') as out_pdf:
-            pdf_writer.write(out_pdf)
-
-    def calculate_marks(self, page):
-        # Implement logic to calculate marks for the extracted questions
-        # This might require extracting text and analyzing it
-        return 1  # Placeholder value
-
-    def upload_to_firebase(self, filename):
-        bucket = storage.bucket()
-        blob = bucket.blob(f'papers/{os.path.basename(filename)}')
-        blob.upload_from_filename(filename)
-
-    def restart_generation(self):
-        self.total_marks = 0
-        self.weightages.clear()
-        self.topics.clear()
-        self.marks_input.clear()
-        self.topic_choice.setCurrentIndex(0)
-        self.weightage_input.clear()
-        self.marks_generated_label.setText("Marks generated: 0")
-        self.marks_remaining_label.setText("Marks remaining: 0")
-        self.process_button.setEnabled(False)
+    # Clean up the image files
+    for image_path in images:
+        os.remove(image_path)
 
 if __name__ == "__main__":
-    app = QtWidgets.QApplication([])
-    window = MainPage()
-    window.show()
-    app.exec()
+    main()

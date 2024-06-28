@@ -1,3 +1,4 @@
+import os
 import firebase_admin
 from firebase_admin import credentials, storage, db
 from fpdf import FPDF
@@ -11,144 +12,21 @@ import string
 from datetime import datetime
 import requests
 import hashlib
-import os
-from PyPDF2 import PdfReader, PdfWriter
+import fitz  # PyMuPDF
+import re
+from reportlab.pdfgen import canvas
+from reportlab.lib.pagesizes import letter
+from PIL import Image, ImageOps
+import pytesseract
+from sentence_transformers import SentenceTransformer, util
+import numpy as np
 
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
 cred = credentials.Certificate('/Users/LakshSarda/Downloads/csia-acb9d-firebase-adminsdk-3rgsb-e4a48f992c.json')
 firebase_admin.initialize_app(cred, {
     'databaseURL': 'https://csia-acb9d-default-rtdb.firebaseio.com',
     'storageBucket': 'csia-acb9d.appspot.com'
 })
-
-def hash_password(password):
-    return hashlib.sha256(password.encode()).hexdigest()
-
-class AccessCodeDialog(QtWidgets.QDialog):
-    def __init__(self):
-        super().__init__()
-        self.setWindowTitle("Enter Access Code")
-        self.setGeometry(100, 100, 400, 200)
-        layout = QtWidgets.QVBoxLayout()
-
-        self.access_code_input = QtWidgets.QLineEdit()
-        self.access_code_input.setPlaceholderText("Enter Access Code")
-        layout.addWidget(self.access_code_input)
-
-        self.verify_button = QtWidgets.QPushButton("Verify")
-        self.verify_button.clicked.connect(self.verify_access_code)
-        layout.addWidget(self.verify_button)
-
-        self.setLayout(layout)
-
-    def verify_access_code(self):
-        access_code = self.access_code_input.text()
-        if access_code:
-            try:
-                response = requests.post('http://127.0.0.1:5000/verify_access_code', json={'access_code': access_code})
-                response.raise_for_status()
-                response_json = response.json()
-                if response.status_code == 200:
-                    QtWidgets.QMessageBox.information(self, "Success", "Access granted.")
-                    self.accept()
-                else:
-                    QtWidgets.QMessageBox.warning(self, "Error", response_json.get('message', 'Invalid or expired access code.'))
-            except requests.exceptions.RequestException as e:
-                QtWidgets.QMessageBox.warning(self, "Error", f"Server error: {e}")
-            except requests.exceptions.JSONDecodeError:
-                QtWidgets.QMessageBox.warning(self, "Error", "Invalid response from server.")
-        else:
-            QtWidgets.QMessageBox.warning(self, "Error", "Access code is required.")
-
-class HelpPage(QtWidgets.QWidget):
-    def __init__(self):
-        super().__init__()
-        self.setWindowTitle("Help")
-        self.setGeometry(100, 100, 600, 400)
-        layout = QtWidgets.QVBoxLayout()
-        label = QtWidgets.QLabel("Help Information:\nThis is a detailed help page with instructions on how to use the application.")
-        layout.addWidget(label)
-        self.setLayout(layout)
-
-class AboutPage(QtWidgets.QWidget):
-    def __init__(self):
-        super().__init__()
-        self.setWindowTitle("About")
-        self.setGeometry(100, 100, 600, 400)
-        layout = QtWidgets.QVBoxLayout()
-        label = QtWidgets.QLabel("About this Application:\nVersion 1.0\nDeveloped by: Your Name")
-        layout.addWidget(label)
-        self.setLayout(layout)
-
-class ResetPasswordDialog(QtWidgets.QDialog):
-    def __init__(self, email):
-        super().__init__()
-        self.email = email
-        self.setWindowTitle("Reset Password")
-        self.setGeometry(100, 100, 400, 300)
-        layout = QtWidgets.QVBoxLayout()
-
-        self.otp_input = QtWidgets.QLineEdit()
-        self.otp_input.setPlaceholderText("Enter OTP")
-        layout.addWidget(self.otp_input)
-
-        self.verify_otp_button = QtWidgets.QPushButton("Verify OTP")
-        self.verify_otp_button.clicked.connect(self.verify_otp)
-        layout.addWidget(self.verify_otp_button)
-
-        self.new_password_input = QtWidgets.QLineEdit()
-        self.new_password_input.setEchoMode(QtWidgets.QLineEdit.EchoMode.Password)
-        self.new_password_input.setPlaceholderText("New Password")
-        self.new_password_input.setEnabled(False)
-        layout.addWidget(self.new_password_input)
-
-        self.confirm_password_input = QtWidgets.QLineEdit()
-        self.confirm_password_input.setEchoMode(QtWidgets.QLineEdit.EchoMode.Password)
-        self.confirm_password_input.setPlaceholderText("Confirm New Password")
-        self.confirm_password_input.setEnabled(False)
-        layout.addWidget(self.confirm_password_input)
-
-        self.reset_password_button = QtWidgets.QPushButton("Reset Password")
-        self.reset_password_button.clicked.connect(self.reset_password)
-        self.reset_password_button.setEnabled(False)
-        layout.addWidget(self.reset_password_button)
-
-        self.setLayout(layout)
-
-    def verify_otp(self):
-        otp = self.otp_input.text()
-        if otp:
-            ref = db.reference('otps')
-            otps = ref.order_by_child('email').equal_to(self.email).get()
-            for otp_key, otp_value in otps.items():
-                if otp_value['otp'] == otp:
-                    QMessageBox.information(self, "OTP Verified", "OTP has been successfully verified.")
-                    ref.child(otp_key).delete()
-                    self.otp_input.setEnabled(False)
-                    self.verify_otp_button.setEnabled(False)
-                    self.new_password_input.setEnabled(True)
-                    self.confirm_password_input.setEnabled(True)
-                    self.reset_password_button.setEnabled(True)
-                    return
-            QMessageBox.warning(self, "Verification Failed", "Invalid OTP.")
-        else:
-            QMessageBox.warning(self, "Input Error", "OTP is required.")
-
-    def reset_password(self):
-        new_password = self.new_password_input.text()
-        confirm_password = self.confirm_password_input.text()
-        if new_password and confirm_password:
-            if new_password == confirm_password:
-                hashed_password = hash_password(new_password)
-                ref = db.reference('users').order_by_child('email').equal_to(self.email).get()
-                for user_key, user_value in ref.items():
-                    db.reference(f'users/{user_key}').update({'password': hashed_password})
-                QMessageBox.information(self, "Success", "Password has been reset successfully.")
-                self.accept()
-            else:
-                QMessageBox.warning(self, "Input Error", "Passwords do not match.")
-        else:
-            QMessageBox.warning(self, "Input Error", "Both fields are required.")
-
 syllabus_details = [
     ["1 States of matter",
         ["1.1 Solids, liquids and gases",
@@ -526,6 +404,64 @@ syllabus_details = [
     ]
 ]
 
+def hash_password(password):
+    return hashlib.sha256(password.encode()).hexdigest()
+
+class AccessCodeDialog(QtWidgets.QDialog):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Enter Access Code")
+        self.setGeometry(100, 100, 400, 200)
+        layout = QtWidgets.QVBoxLayout()
+
+        self.access_code_input = QtWidgets.QLineEdit()
+        self.access_code_input.setPlaceholderText("Enter Access Code")
+        layout.addWidget(self.access_code_input)
+
+        self.verify_button = QtWidgets.QPushButton("Verify")
+        self.verify_button.clicked.connect(self.verify_access_code)
+        layout.addWidget(self.verify_button)
+
+        self.setLayout(layout)
+
+    def verify_access_code(self):
+        access_code = self.access_code_input.text()
+        if access_code:
+            try:
+                response = requests.post('http://127.0.0.1:5000/verify_access_code', json={'access_code': access_code})
+                response.raise_for_status()
+                response_json = response.json()
+                if response.status_code == 200:
+                    QtWidgets.QMessageBox.information(self, "Success", "Access granted.")
+                    self.accept()
+                else:
+                    QtWidgets.QMessageBox.warning(self, "Error", response_json.get('message', 'Invalid or expired access code.'))
+            except requests.exceptions.RequestException as e:
+                QtWidgets.QMessageBox.warning(self, "Error", f"Server error: {e}")
+            except requests.exceptions.JSONDecodeError:
+                QtWidgets.QMessageBox.warning(self, "Error", "Invalid response from server.")
+        else:
+            QtWidgets.QMessageBox.warning(self, "Error", "Access code is required.")
+
+class HelpPage(QtWidgets.QWidget):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Help")
+        self.setGeometry(100, 100, 600, 400)
+        layout = QtWidgets.QVBoxLayout()
+        label = QtWidgets.QLabel("Help Information:\nThis is a detailed help page with instructions on how to use the application.")
+        layout.addWidget(label)
+        self.setLayout(layout)
+
+class AboutPage(QtWidgets.QWidget):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("About")
+        self.setGeometry(100, 100, 600, 400)
+        layout = QtWidgets.QVBoxLayout()
+        label = QtWidgets.QLabel("About this Application:\nVersion 1.0\nDeveloped by: Laksh Sarda")
+        layout.addWidget(label)
+        self.setLayout(layout)
 
 class MainPage(QtWidgets.QWidget):
     def __init__(self):
@@ -552,6 +488,12 @@ class MainPage(QtWidgets.QWidget):
         self.about_button.setStyleSheet(self.get_button_style())
         layout.addWidget(self.about_button)
         self.about_button.clicked.connect(self.open_about_page)
+
+        self.my_papers_button = QtWidgets.QPushButton("My Papers")
+        self.my_papers_button.setMinimumHeight(80)
+        self.my_papers_button.setStyleSheet(self.get_button_style())
+        layout.addWidget(self.my_papers_button)
+        self.my_papers_button.clicked.connect(self.open_my_papers_page)
 
         self.setLayout(layout)
 
@@ -584,22 +526,32 @@ class MainPage(QtWidgets.QWidget):
         self.about_page = AboutPage()
         self.about_page.show()
 
+    def open_my_papers_page(self):
+        self.my_papers_page = MyPapersPage()
+        self.my_papers_page.show()
+
     def show_paper_generation_options(self):
         self.paper_gen_window = PaperGenerationWindow()
         self.paper_gen_window.show()
 
-class PaperGenerationWindow(QtWidgets.QWidget):
+class MyPapersPage(QtWidgets.QWidget):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Paper Generation")
+        self.setWindowTitle("My Papers")
         self.setGeometry(100, 100, 800, 600)
         layout = QtWidgets.QVBoxLayout()
 
-        self.generate_paper_button = QtWidgets.QPushButton("Generate Paper (MCQ)")
-        self.generate_paper_button.setMinimumHeight(80)
-        self.generate_paper_button.setStyleSheet(self.get_button_style())
-        self.generate_paper_button.clicked.connect(self.generate_paper)
-        layout.addWidget(self.generate_paper_button)
+        self.papers_list = QtWidgets.QListWidget()
+        layout.addWidget(self.papers_list)
+        self.papers_list.itemClicked.connect(self.display_paper_details)
+
+        self.clear_history_button = QtWidgets.QPushButton("Clear History")
+        self.clear_history_button.setMinimumHeight(50)
+        self.clear_history_button.setStyleSheet(self.get_button_style())
+        self.clear_history_button.clicked.connect(self.clear_history)
+        layout.addWidget(self.clear_history_button)
+
+        self.load_papers()
 
         self.setLayout(layout)
 
@@ -624,18 +576,83 @@ class PaperGenerationWindow(QtWidgets.QWidget):
             }
         """
 
-    def generate_paper(self):
-        self.paper_window = PaperWindow()
-        self.paper_window.show()
+    def load_papers(self):
+        self.papers_list.clear()
+        user_papers_ref = db.reference('user_papers')
+        papers = user_papers_ref.get()
+        self.papers = papers if papers else {}
+        for key, paper in self.papers.items():
+            item = QtWidgets.QListWidgetItem(os.path.basename(paper['filename']))
+            item.setData(QtCore.Qt.ItemDataRole.UserRole, key)
+            self.papers_list.addItem(item)
 
-class PaperWindow(QtWidgets.QWidget):
+    def display_paper_details(self, item):
+        paper_key = item.data(QtCore.Qt.ItemDataRole.UserRole)
+        paper_details = self.papers.get(paper_key)
+        if paper_details:
+            details = (
+                f"Filename: {os.path.basename(paper_details['filename'])}\n"
+                f"Total Marks: {paper_details['total_marks']}\n"
+                f"Topics: {', '.join(paper_details['topics'])}\n"
+                f"Weightages: {', '.join(map(str, paper_details['weightages']))}\n"
+                f"Timestamp: {paper_details['timestamp']}"
+            )
+            QMessageBox.information(self, "Paper Details", details)
+
+    def clear_history(self):
+        user_papers_ref = db.reference('user_papers')
+        user_papers_ref.delete()
+        self.load_papers()
+
+class PaperGenerationWindow(QtWidgets.QWidget):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Generate Paper")
+        self.setWindowTitle("Paper Generation")
+        self.setGeometry(100, 100, 800, 600)
+        layout = QtWidgets.QVBoxLayout()
+
+        self.generate_paper_2_button = QtWidgets.QPushButton("Generate Paper 2 (MCQ)")
+        self.generate_paper_2_button.setMinimumHeight(80)
+        self.generate_paper_2_button.setStyleSheet(self.get_button_style())
+        self.generate_paper_2_button.clicked.connect(self.generate_paper_2)
+        layout.addWidget(self.generate_paper_2_button)
+
+        self.setLayout(layout)
+
+    def get_button_style(self):
+        return """
+            QPushButton {
+                background-color: #5A5A5A;
+                color: #FFFFFF;
+                padding: 15px 30px;
+                border-radius: 10px;
+                font-size: 16px;
+                font-weight: bold;
+                border: 2px solid #5A5A5A;
+            }
+            QPushButton:hover {
+                background-color: #34ebb1;
+                border: 2px solid #34ebb1;
+            }
+            QPushButton:pressed {
+                background-color: #34ebb1;
+                border: 2px solid #34ebb1;
+            }
+        """
+
+    def generate_paper_2(self):
+        self.paper_2_window = Paper2Window()
+        self.paper_2_window.show()
+
+class Paper2Window(QtWidgets.QWidget):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Generate Paper 2 (MCQ)")
         self.setGeometry(100, 100, 800, 600)
         self.total_marks = 0
         self.weightages = []
         self.topics = []
+        self.included_questions = set()  # Track included questions to avoid redundancy
 
         layout = QtWidgets.QVBoxLayout()
 
@@ -648,8 +665,62 @@ class PaperWindow(QtWidgets.QWidget):
         layout.addSpacerItem(QtWidgets.QSpacerItem(20, 50))
 
         self.topic_choice = QtWidgets.QComboBox()
-        self.topic_choice.addItems(self.get_all_topics())
         self.topic_choice.setMinimumHeight(50)
+        
+        # Populate dropdown menu with units
+        unit_options = [
+            "1.1 Solids, liquids and gases",
+            "1.2 Diffusion",
+            "2.1 Elements, compounds and mixtures",
+            "2.2 Atomic structure and the Periodic Table",
+            "2.3 Isotopes",
+            "2.4 Ions and ionic bonds",
+            "2.5 Simple molecules and covalent bonds",
+            "2.6 Giant covalent structures",
+            "2.7 Metallic bonding",
+            "3.1 Formulae",
+            "3.2 Relative masses of atoms and molecules",
+            "3.3 The mole and the Avogadro constant",
+            "4.1 Electrolysis",
+            "4.2 Hydrogen–oxygen fuel cells",
+            "5.1 Exothermic and endothermic reactions",
+            "6.1 Physical and chemical changes",
+            "6.2 Rate of reaction",
+            "6.3 Reversible reactions and equilibrium",
+            "6.4 Redox",
+            "7.1 The characteristic properties of acids and bases",
+            "7.2 Oxides",
+            "7.3 Preparation of salts",
+            "8.1 Arrangement of elements",
+            "8.2 Group I properties",
+            "8.3 Group VII properties",
+            "8.4 Transition elements",
+            "8.5 Noble gases",
+            "9.1 Properties of metals",
+            "9.2 Uses of metals",
+            "9.3 Alloys and their properties",
+            "9.4 Reactivity series",
+            "9.5 Corrosion of metals",
+            "9.6 Extraction of metals",
+            "10.1 Water",
+            "10.2 Fertilisers",
+            "10.3 Air quality and climate",
+            "11.1 Formulae, functional groups and terminology",
+            "11.2 Naming organic compounds",
+            "11.3 Fuels",
+            "11.4 Alkanes",
+            "11.5 Alkenes",
+            "11.6 Alcohols",
+            "11.7 Carboxylic acids",
+            "11.8 Polymers",
+            "12.1 Experimental design",
+            "12.2 Acid–base titrations",
+            "12.3 Chromatography",
+            "12.4 Separation and purification",
+            "12.5 Identification of ions and gases"
+        ]
+
+        self.topic_choice.addItems(unit_options)
         layout.addWidget(self.topic_choice)
 
         layout.addSpacerItem(QtWidgets.QSpacerItem(20, 50))
@@ -666,6 +737,9 @@ class PaperWindow(QtWidgets.QWidget):
         self.add_topic_button.setStyleSheet(self.get_button_style())
         self.add_topic_button.clicked.connect(self.add_topic)
         layout.addWidget(self.add_topic_button)
+
+        self.random_generation_toggle = QtWidgets.QCheckBox("Generate Randomly")
+        layout.addWidget(self.random_generation_toggle)
 
         layout.addSpacerItem(QtWidgets.QSpacerItem(20, 50))
 
@@ -715,13 +789,6 @@ class PaperWindow(QtWidgets.QWidget):
             }
         """
 
-    def get_all_topics(self):
-        topics = []
-        for topic in syllabus_details:
-            for subtopic in topic[1:]:
-                topics.append(subtopic[0])
-        return topics
-
     def update_marks(self):
         try:
             self.total_marks = int(self.marks_input.text())
@@ -763,46 +830,123 @@ class PaperWindow(QtWidgets.QWidget):
         options = file_dialog.options()
         filename, _ = file_dialog.getSaveFileName(self, "Save PDF", "", "PDF Files (*.pdf);;All Files (*)", options=options)
         if filename:
-            self.generate_pdf(filename)
+            self.generate_custom_pdf(filename)
             self.upload_to_firebase(filename)
             QMessageBox.information(self, "Success", f"PDF generated and uploaded as {os.path.basename(filename)}")
 
-    def generate_pdf(self, filename):
-        pdf_writer = PdfWriter()
-        pdf_reader = PdfReader()  # Create an empty reader for concatenation
+    def generate_custom_pdf(self, filename):
+        selected_unit_details = []
+        for topic in self.topics:
+            for detail in syllabus_details:
+                if detail[0].startswith(topic.split('.')[0]):
+                    for sub_detail in detail[1:]:
+                        if sub_detail[0].startswith(topic):
+                            selected_unit_details.extend(sub_detail[1])
 
-        past_papers_dir = "past_papers"  # Path to the directory containing past papers
-        past_papers = [os.path.join(past_papers_dir, f) for f in os.listdir(past_papers_dir) if f.endswith('.pdf')]
+        questions = []
+        pdf_files = [f for f in os.listdir('past_papers') if f.endswith('.pdf')]
+        pdf_file_questions = {}
 
-        questions_added = []
+        for pdf_file in pdf_files:
+            pdf_path = os.path.join('past_papers', pdf_file)
+            extracted_questions = extract_questions_from_pdf(pdf_path)
+            pdf_file_questions[pdf_file] = extracted_questions
+            questions.extend(extracted_questions)
 
-        for topic, weightage in zip(self.topics, self.weightages):
-            marks_needed = (weightage / 100) * self.total_marks
-            marks_added = 0
+        similarity_scores = calculate_similarity_st(selected_unit_details, questions)
 
-            for paper in past_papers:
-                if marks_added >= marks_needed:
-                    break
+        question_marks = 0
+        processed_questions = set()
+        output_pdf_paths = []
+        matched_criteria = []
+        marks_needed = {topic: (self.weightages[i] / 100) * self.total_marks for i, topic in enumerate(self.topics)}
+        marks_allocated = {topic: 0 for topic in self.topics}
 
-                pdf_reader = PdfReader(paper)
-                for page_num in range(len(pdf_reader.pages)):
-                    page = pdf_reader.pages[page_num]
-                    text = page.extract_text()
+        random_generation = self.random_generation_toggle.isChecked()
 
-                    if topic in text and page_num not in questions_added:
-                        pdf_writer.add_page(page)
-                        questions_added.append(page_num)
-                        marks_added += self.calculate_marks(page)
-                        if marks_added >= marks_needed:
+        if random_generation:
+            np.random.shuffle(questions)
+
+        while question_marks < self.total_marks and question_marks < len(questions):
+            for question_index, question in enumerate(questions):
+                if question_index in processed_questions:
+                    continue
+
+                question_number = int(re.findall(r'^\d+', question)[0])
+                if question_number in [1, 2, 3, 4]:
+                    continue
+
+                if question in self.included_questions:
+                    continue
+
+                max_score = 0
+                best_match = None
+                best_topic = None
+
+                for i, score in enumerate(similarity_scores):
+                    if score[question_index] > max_score:
+                        max_score = score[question_index]
+                        best_match = selected_unit_details[i]
+                        best_topic = self.topics[i % len(self.topics)]
+
+                if max_score > 0.595 and marks_allocated[best_topic] < marks_needed[best_topic]:
+                    for pdf_file, extracted_questions in pdf_file_questions.items():
+                        if question in extracted_questions:
+                            pdf_path = os.path.join('past_papers', pdf_file)
                             break
 
-        with open(filename, 'wb') as out_pdf:
-            pdf_writer.write(out_pdf)
+                    coordinates = locate_question(pdf_path, question)
+                    if coordinates:
+                        short_question_id = hashlib.md5(question.encode()).hexdigest()[:8]
+                        output_pdf_path = f"output_{pdf_file}_{short_question_id}.pdf"
+                        if create_output_pdf(pdf_path, coordinates, output_pdf_path):
+                            img = Image.open(f"page_{coordinates['page_start']}.png")
+                            img = ImageOps.grayscale(img)
+                            extracted_text = pytesseract.image_to_string(img)
+                            word_count = len(extracted_text.split())
+                            question_number_count = len(re.findall(r'^\d+\s', extracted_text, re.MULTILINE))
+                            if word_count >= 10 and question_number_count == 1:
+                                paper_code = os.path.splitext(os.path.basename(pdf_path))[0]
+                                output_pdf_paths.append(output_pdf_path)
+                                matched_criteria.append((question, best_match, max_score, paper_code))
+                                question_marks += 1
+                                marks_allocated[best_topic] += 1
+                                processed_questions.add(question_index)
+                                self.included_questions.add(question)  # Add the question to the set
+                                print(f"Question: {question}\nMatched Syllabus Criteria: {best_match}\nCosine Similarity Score: {max_score:.4f}\nPaper Code: {paper_code}\n")
+                            else:
+                                os.remove(output_pdf_path)
+                    if question_marks >= self.total_marks:
+                        break
 
-    def calculate_marks(self, page):
-        # Implement logic to calculate marks for the extracted questions
-        # This might require extracting text and analyzing it
-        return 1  # Placeholder value
+        combined_output_pdf_path = filename
+        if output_pdf_paths:
+            combined_doc = fitz.open()
+            for path in output_pdf_paths:
+                combined_doc.insert_pdf(fitz.open(path))
+            combined_doc.save(combined_output_pdf_path)
+            combined_doc.close()
+
+            for path in output_pdf_paths:
+                if os.path.exists(path):
+                    os.remove(path)
+
+            print(f"Output PDF created at {combined_output_pdf_path}")
+        else:
+            print("Failed to create a combined output PDF. No valid questions found that meet the criteria.")
+
+        self.store_paper_details(filename)
+
+    def store_paper_details(self, filename):
+        user_papers_ref = db.reference('user_papers')
+        paper_details = {
+            'filename': filename,
+            'total_marks': self.total_marks,
+            'topics': self.topics,
+            'weightages': self.weightages,
+            'timestamp': datetime.utcnow().isoformat()
+        }
+        user_papers_ref.push(paper_details)
 
     def upload_to_firebase(self, filename):
         bucket = storage.bucket()
@@ -813,6 +957,7 @@ class PaperWindow(QtWidgets.QWidget):
         self.total_marks = 0
         self.weightages.clear()
         self.topics.clear()
+        self.included_questions.clear()  # Reset the included questions set
         self.marks_input.clear()
         self.topic_choice.setCurrentIndex(0)
         self.weightage_input.clear()
@@ -820,8 +965,575 @@ class PaperWindow(QtWidgets.QWidget):
         self.marks_remaining_label.setText("Marks remaining: 0")
         self.process_button.setEnabled(False)
 
+def extract_questions_from_pdf(pdf_path):
+    doc = fitz.open(pdf_path)
+    questions = []
+
+    question_start_regex = re.compile(r'^\d+\s')  # Matches question numbers at the beginning of a line
+
+    for page_num in range(1, doc.page_count - 1):  # Ignoring the first and last page
+        page = doc[page_num]
+        text = page.get_text("text")
+        
+        lines = text.split('\n')
+        current_question = ""
+        
+        for line in lines:
+            if re.match(r'© UCLES', line) or re.match(r'\[Turn over\]', line):
+                continue
+            
+            if re.match(r'^[A-D]\s', line):
+                continue
+
+            # Ensure the number is between 1 and 40
+            match = question_start_regex.match(line)
+            if match:
+                question_number = int(match.group().strip())
+                if 1 <= question_number <= 40:
+                    if current_question:
+                        questions.append(current_question.strip())
+                    current_question = line
+                else:
+                    current_question += " " + line
+            else:
+                current_question += " " + line
+
+        if current_question:
+            questions.append(current_question.strip())
+    
+    filtered_questions = []
+    for question in questions:
+        question = re.sub(r'© UCLES.*', '', question)
+        question = re.sub(r'\[Turn over\]', '', question)
+        question = question.strip()
+        if question and not re.match(r'^\d{1,2}\s+\d{4}/\d{2}/[A-Z]/\d{2}$', question):
+            filtered_questions.append(question)
+    
+    return filtered_questions
+
+def calculate_similarity_st(syllabus_details, questions):
+    model = SentenceTransformer('paraphrase-mpnet-base-v2')
+    
+    syllabus_embeddings = model.encode(syllabus_details, convert_to_tensor=True)
+    question_embeddings = model.encode(questions, convert_to_tensor=True)
+    
+    similarity_scores = util.pytorch_cos_sim(syllabus_embeddings, question_embeddings)
+    
+    return similarity_scores.cpu().numpy()
+
+def locate_question(pdf_path, question):
+    doc = fitz.open(pdf_path)
+    question_number = int(re.findall(r'^\d+', question)[0])
+    question_start_regex = re.compile(rf'^{question_number}\s')
+    question_end_regex = re.compile(rf'^{question_number + 1}\s')
+
+    question_start = None
+    question_end = None
+    page_number_start = None
+    page_number_end = None
+
+    for page_num in range(len(doc)):
+        page = doc.load_page(page_num)
+        text = page.get_text("text")
+        lines = text.splitlines()
+
+        for line_num, line in enumerate(lines):
+            if question_start is None and re.match(question_start_regex, line):
+                search_result = page.search_for(line)
+                if search_result:
+                    question_start = search_result[0]
+                    page_number_start = page_num
+                    continue
+
+            if question_start is not None and re.match(question_end_regex, line):
+                search_result = page.search_for(line)
+                if search_result:
+                    question_end = search_result[0]
+                    page_number_end = page_num
+                    break
+
+        if question_start and question_end:
+            break
+
+    if not question_start:
+        return None
+
+    if not question_end:
+        question_end = fitz.Rect(question_start.x0, question_start.y1, page.rect.width, page.rect.height)
+        page_number_end = page_number_start
+
+    return {
+        'start': question_start,
+        'end': question_end,
+        'page_start': page_number_start,
+        'page_end': page_number_end
+    }
+
+def create_output_pdf(pdf_path, coordinates, output_pdf_path):
+    doc = fitz.open(pdf_path)
+    c = canvas.Canvas(output_pdf_path)
+    valid_pages = 0
+
+    for page_num in range(coordinates['page_start'], coordinates['page_end'] + 1):
+        page = doc.load_page(page_num)
+        if page_num == coordinates['page_start']:
+            rect = fitz.Rect(0, coordinates['start'].y0, page.rect.width, page.rect.height)
+            if page_num == coordinates['page_end']:
+                rect = fitz.Rect(0, coordinates['start'].y0, page.rect.width, coordinates['end'].y0)
+        elif page_num == coordinates['page_end']:
+            rect = fitz.Rect(0, 0, page.rect.width, coordinates['end'].y0)
+        else:
+            rect = fitz.Rect(0, 0, page.rect.width, page.rect.height)
+
+        if rect.width <= 0 or rect.height <= 0:
+            continue
+
+        pix = page.get_pixmap(clip=rect)
+        img_path = f"page_{page_num}.png"
+        pix.save(img_path)
+
+        img = Image.open(img_path)
+        img = ImageOps.grayscale(img)
+        extracted_text = pytesseract.image_to_string(img)
+        lines = extracted_text.split('\n')
+        word_count = len(extracted_text.split())
+        line_count = len([line for line in lines if line.strip() != ""])
+
+        question_number_count = len(re.findall(r'^\d+\s', extracted_text, re.MULTILINE))
+
+        # Validation to discard images with less than 10 words, containing more than one question,
+        # or containing less than 2 lines of text
+        if word_count < 10 or question_number_count > 1 or line_count < 2:
+            os.remove(img_path)
+            continue
+
+        img_width, img_height = img.size
+        c.setPageSize((img_width, img_height))
+        c.drawImage(img_path, 0, 0, img_width, img_height)
+        c.showPage()
+        valid_pages += 1
+
+    c.save()
+    if valid_pages > 0:
+        return True
+    else:
+        return False
+
+def send_otp(email):
+    otp = ''.join(random.choices(string.digits, k=6))
+    ref = db.reference('otps')
+    ref.push({
+        'email': email,
+        'otp': otp
+    })
+
+    sender_email = "your_email@example.com"
+    app_password = "your_app_password"
+    recipient_email = email
+    message = MIMEText(f"Your OTP code is: {otp}")
+    message['Subject'] = "OTP Verification"
+    message['From'] = sender_email
+    message['To'] = recipient_email
+
+    try:
+        with smtplib.SMTP("smtp.gmail.com", 587) as server:
+            server.starttls()
+            server.login(sender_email, app_password)
+            server.sendmail(sender_email, recipient_email, message.as_string())
+    except Exception as e:
+        print("Failed to send email:", e)
+
+class ResetPasswordDialog(QtWidgets.QDialog):
+    def __init__(self, email):
+        super().__init__()
+        self.email = email
+        self.setWindowTitle("Reset Password")
+        self.setGeometry(100, 100, 400, 300)
+        layout = QtWidgets.QVBoxLayout()
+
+        self.otp_input = QtWidgets.QLineEdit()
+        self.otp_input.setPlaceholderText("Enter OTP")
+        layout.addWidget(self.otp_input)
+
+        self.verify_otp_button = QtWidgets.QPushButton("Verify OTP")
+        self.verify_otp_button.clicked.connect(self.verify_otp)
+        layout.addWidget(self.verify_otp_button)
+
+        self.new_password_input = QtWidgets.QLineEdit()
+        self.new_password_input.setEchoMode(QtWidgets.QLineEdit.EchoMode.Password)
+        self.new_password_input.setPlaceholderText("New Password")
+        self.new_password_input.setEnabled(False)
+        layout.addWidget(self.new_password_input)
+
+        self.confirm_password_input = QtWidgets.QLineEdit()
+        self.confirm_password_input.setEchoMode(QtWidgets.QLineEdit.EchoMode.Password)
+        self.confirm_password_input.setPlaceholderText("Confirm New Password")
+        self.confirm_password_input.setEnabled(False)
+        layout.addWidget(self.confirm_password_input)
+
+        self.reset_password_button = QtWidgets.QPushButton("Reset Password")
+        self.reset_password_button.clicked.connect(self.reset_password)
+        self.reset_password_button.setEnabled(False)
+        layout.addWidget(self.reset_password_button)
+
+        self.setLayout(layout)
+
+    def verify_otp(self):
+        otp = self.otp_input.text()
+        if otp:
+            ref = db.reference('otps')
+            otps = ref.order_by_child('email').equal_to(self.email).get()
+            for otp_key, otp_value in otps.items():
+                if otp_value['otp'] == otp:
+                    QMessageBox.information(self, "OTP Verified", "OTP has been successfully verified.")
+                    ref.child(otp_key).delete()
+                    self.otp_input.setEnabled(False)
+                    self.verify_otp_button.setEnabled(False)
+                    self.new_password_input.setEnabled(True)
+                    self.confirm_password_input.setEnabled(True)
+                    self.reset_password_button.setEnabled(True)
+                    return
+            QMessageBox.warning(self, "Verification Failed", "Invalid OTP.")
+        else:
+            QMessageBox.warning(self, "Input Error", "OTP is required.")
+
+    def reset_password(self):
+        new_password = self.new_password_input.text()
+        confirm_password = self.confirm_password_input.text()
+        if new_password and confirm_password:
+            if new_password == confirm_password:
+                hashed_password = hash_password(new_password)
+                ref = db.reference('users').order_by_child('email').equal_to(self.email).get()
+                for user_key, user_value in ref.items():
+                    db.reference(f'users/{user_key}').update({'password': hashed_password})
+                QMessageBox.information(self, "Success", "Password has been reset successfully.")
+                self.accept()
+            else:
+                QMessageBox.warning(self, "Input Error", "Passwords do not match.")
+        else:
+            QMessageBox.warning(self, "Input Error", "Both fields are required.")
+
+class AuthApp(QtWidgets.QWidget):
+    def __init__(self):
+        super().__init__()
+        self.initUI()
+
+    def initUI(self):
+        self.setWindowTitle("Application Title")
+        self.setStyleSheet("background-color: #2b2b2b;")
+        self.showFullScreen()
+        main_layout = QtWidgets.QVBoxLayout()
+
+        title_label = QtWidgets.QLabel("Welcome to Application!")
+        title_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        title_label.setStyleSheet("font-size: 3vw; color: #FFFFFF; font-weight: bold;")
+        main_layout.addWidget(title_label)
+
+        self.tabs = QtWidgets.QTabWidget()
+        self.tabs.setStyleSheet("""
+            QTabBar::tab {
+                background-color: #5A5A5A; 
+                color: #FFFFFF; 
+                padding: 1.5vw 2.5vw; 
+                border-radius: 5px;
+            }
+            QTabBar::tab:selected {
+                background-color: #FFA500;
+            }
+            QTabBar::tab:hover {
+                background-color: #FF8C00;
+            }
+        """)
+        self.tabs.addTab(self.create_signup_tab(), "Sign Up")
+        self.tabs.addTab(self.create_login_tab(), "Login")
+        main_layout.addWidget(self.tabs)
+
+        self.setLayout(main_layout)
+
+    def create_signup_tab(self):
+        signup_tab = QtWidgets.QWidget()
+        layout = QtWidgets.QVBoxLayout()
+        self.signup_email = QtWidgets.QLineEdit()
+        self.signup_email.setPlaceholderText("Email")
+        self.signup_email.setMinimumWidth(350)
+        self.signup_email.setMinimumHeight(35)
+
+        signup_button = QtWidgets.QPushButton("Send OTP")
+        signup_button.setMinimumHeight(50)
+        signup_button.setStyleSheet(self.get_button_style())
+        signup_button.clicked.connect(self.handle_signup)
+
+        self.otp_input = QtWidgets.QLineEdit()
+        self.otp_input.setPlaceholderText("OTP")
+        self.otp_input.setMinimumHeight(35)
+        self.otp_input.setStyleSheet(self.get_button_style())
+        self.otp_input.setEnabled(False)
+
+        verify_button = QtWidgets.QPushButton("Verify OTP")
+        verify_button.setMinimumHeight(50)
+        verify_button.setStyleSheet(self.get_button_style())
+        verify_button.clicked.connect(self.handle_verification)
+        verify_button.setEnabled(False)
+
+        self.signup_password = QtWidgets.QLineEdit()
+        self.signup_password.setEchoMode(QtWidgets.QLineEdit.EchoMode.Password)
+        self.signup_password.setPlaceholderText("Password")
+        self.signup_password.setMinimumHeight(35)
+        self.signup_password.setEnabled(False)
+
+        self.signup_password_confirm = QtWidgets.QLineEdit()
+        self.signup_password_confirm.setEchoMode(QtWidgets.QLineEdit.EchoMode.Password)
+        self.signup_password_confirm.setPlaceholderText("Confirm Password")
+        self.signup_password_confirm.setMinimumHeight(35)
+        self.signup_password_confirm.setEnabled(False)
+
+        view_password_button_signup = QtWidgets.QPushButton("View Password")
+        view_password_button_signup.setMinimumHeight(50)
+        view_password_button_signup.setStyleSheet(self.get_button_style())
+        view_password_button_signup.clicked.connect(lambda: self.toggle_password(self.signup_password))
+
+        view_password_confirm_button_signup = QtWidgets.QPushButton("View Password Confirmation")
+        view_password_confirm_button_signup.setMinimumHeight(50)
+        view_password_confirm_button_signup.setStyleSheet(self.get_button_style())
+        view_password_confirm_button_signup.clicked.connect(lambda: self.toggle_password(self.signup_password_confirm))
+
+        final_signup_button = QtWidgets.QPushButton("Sign Up")
+        final_signup_button.setMinimumHeight(50)
+        final_signup_button.setStyleSheet(self.get_button_style())
+        final_signup_button.clicked.connect(self.complete_signup)
+        final_signup_button.setEnabled(False)
+
+        layout.addWidget(self.signup_email)
+        layout.addWidget(signup_button)
+        layout.addWidget(self.otp_input)
+        layout.addWidget(verify_button)
+        layout.addWidget(self.signup_password)
+        layout.addWidget(self.signup_password_confirm)
+        layout.addWidget(view_password_button_signup)
+        layout.addWidget(view_password_confirm_button_signup)
+        layout.addWidget(final_signup_button)
+        signup_tab.setLayout(layout)
+
+        self.signup_button = signup_button
+        self.verify_button = verify_button
+        self.final_signup_button = final_signup_button
+
+        return signup_tab
+
+    def create_login_tab(self):
+        login_tab = QtWidgets.QWidget()
+        layout = QtWidgets.QVBoxLayout()
+        self.login_email = QtWidgets.QLineEdit()
+        self.login_email.setPlaceholderText("Email")
+        self.login_email.setMinimumHeight(35)
+        self.login_password = QtWidgets.QLineEdit()
+        self.login_password.setEchoMode(QtWidgets.QLineEdit.EchoMode.Password)
+        self.login_password.setPlaceholderText("Password")
+        self.login_password.setMinimumHeight(35)
+
+        view_password_button_login = QtWidgets.QPushButton("View Password")
+        view_password_button_login.setStyleSheet(self.get_button_style())
+        view_password_button_login.setMinimumHeight(50)
+        view_password_button_login.clicked.connect(lambda: self.toggle_password(self.login_password))
+
+        login_button = QtWidgets.QPushButton("Login")
+        login_button.setStyleSheet(self.get_button_style())
+        login_button.setMinimumHeight(50)
+        login_button.clicked.connect(self.login_with_access_code)
+
+        request_login_button = QtWidgets.QPushButton("Request Login")
+        request_login_button.setStyleSheet(self.get_button_style())
+        request_login_button.setMinimumHeight(50)
+        request_login_button.clicked.connect(self.handle_request_login)
+
+        forgot_password_button = QtWidgets.QPushButton("Forgot Password?")
+        forgot_password_button.setStyleSheet(self.get_button_style())
+        forgot_password_button.setMinimumHeight(50)
+        forgot_password_button.clicked.connect(self.handle_forgot_password)
+
+        self.access_code_button = QtWidgets.QPushButton("Enter Access Code")
+        self.access_code_button.setStyleSheet(self.get_button_style())
+        self.access_code_button.setMinimumHeight(50)
+        self.access_code_button.clicked.connect(self.open_access_code_dialog)
+        self.access_code_button.setEnabled(False)
+
+        layout.addWidget(self.login_email)
+        layout.addWidget(self.login_password)
+        layout.addWidget(view_password_button_login)
+        layout.addWidget(login_button)
+        layout.addWidget(request_login_button)
+        layout.addWidget(forgot_password_button)
+        layout.addWidget(self.access_code_button)
+        login_tab.setLayout(layout)
+
+        return login_tab
+
+    def toggle_password(self, field):
+        if field.echoMode() == QtWidgets.QLineEdit.EchoMode.Password:
+            field.setEchoMode(QtWidgets.QLineEdit.EchoMode.Normal)
+        else:
+            field.setEchoMode(QtWidgets.QLineEdit.EchoMode.Password)
+
+    def handle_signup(self):
+        email = self.signup_email.text()
+        if email:
+            send_otp(email)
+            QMessageBox.information(self, "OTP Sent", "An OTP has been sent to your email.")
+            self.signup_button.setEnabled(False)
+            self.otp_input.setEnabled(True)
+            self.verify_button.setEnabled(True)
+        else:
+            QMessageBox.warning(self, "Input Error", "Email is required.")
+
+    def handle_verification(self):
+        email = self.signup_email.text()
+        otp = self.otp_input.text()
+        if email and otp:
+            ref = db.reference('otps')
+            otps = ref.order_by_child('email').get()
+            for otp_key, otp_value in otps.items():
+                if otp_value['email'] == email and otp_value['otp'] == otp:
+                    QMessageBox.information(self, "OTP Verified", "OTP has been successfully verified.")
+                    ref.child(otp_key).delete()
+                    self.otp_input.setEnabled(False)
+                    self.verify_button.setEnabled(False)
+                    self.signup_password.setEnabled(True)
+                    self.signup_password_confirm.setEnabled(True)
+                    self.final_signup_button.setEnabled(True)
+                    return
+            QMessageBox.warning(self, "Verification Failed", "Invalid OTP.")
+        else:
+            QMessageBox.warning(self, "Input Error", "Email and OTP are required.")
+
+    def complete_signup(self):
+        email = self.signup_email.text()
+        password = self.signup_password.text()
+        password_confirm = self.signup_password_confirm.text()
+        if email and password and password_confirm:
+            if password == password_confirm:
+                hashed_password = hash_password(password)
+                ref = db.reference('users')
+                ref.push({
+                    'email': email,
+                    'password': hashed_password
+                })
+                QMessageBox.information(self, "Sign Up Successful", "Your account has been created successfully.")
+                self.signup_email.clear()
+                self.otp_input.clear()
+                self.signup_password.clear()
+                self.signup_password_confirm.clear()
+                self.signup_button.setEnabled(True)
+                self.otp_input.setEnabled(False)
+                self.verify_button.setEnabled(False)
+                self.signup_password.setEnabled(False)
+                self.signup_password_confirm.setEnabled(False)
+                self.final_signup_button.setEnabled(False)
+            else:
+                QMessageBox.warning(self, "Input Error", "Passwords do not match.")
+        else:
+            QMessageBox.warning(self, "Input Error", "All fields are required.")
+
+    def handle_request_login(self):
+        email = self.login_email.text()
+        password = self.login_password.text()
+
+        if not email or not password:
+            QtWidgets.QMessageBox.warning(self, "Error", "Both fields are required!")
+            return
+
+        password_hash = hash_password(password)
+        ref = db.reference('users').order_by_child('email').equal_to(email).limit_to_last(1).get()
+        user_data = next(iter(ref.values()), None)
+
+        print(f"user_data: {user_data}")
+
+        if user_data and user_data.get('password') == password_hash:
+            response = requests.post('http://127.0.0.1:5000/request_approval', json={'email': email})
+            if response.status_code == 200:
+                QtWidgets.QMessageBox.information(self, "Info", "Login request sent to superadmin for approval.")
+                self.access_code_button.setEnabled(True)
+            else:
+                QtWidgets.QMessageBox.warning(self, "Error", "Failed to send approval request.")
+        else:
+            QtWidgets.QMessageBox.warning(self, "Error", "Invalid email or password.")
+
+    def login_with_access_code(self):
+        email = self.login_email.text()
+        password = self.login_password.text()
+
+        if not email or not password:
+            QtWidgets.QMessageBox.warning(self, "Error", "Both fields are required!")
+            return
+
+        password_hash = hash_password(password)
+        ref = db.reference('users').order_by_child('email').equal_to(email).limit_to_last(1).get()
+        user_data = next(iter(ref.values()), None)
+
+        print(f"user_data: {user_data}")
+
+        if user_data and user_data.get('password') == password_hash:
+            self.access_code_button.setEnabled(True)
+            self.open_access_code_dialog()
+        else:
+            QtWidgets.QMessageBox.warning(self, "Error", "Invalid email or password.")
+
+    def open_access_code_dialog(self):
+        dialog = AccessCodeDialog()
+        if dialog.exec() == QtWidgets.QDialog.DialogCode.Accepted:
+            access_code = dialog.access_code_input.text()
+            email = self.login_email.text()
+
+            if access_code and email:
+                try:
+                    ref = db.reference('access_codes')
+                    access_codes = ref.order_by_child('email').equal_to(email).get()
+                    for code_key, code_value in access_codes.items():
+                        if code_value['access_code'] == access_code:
+                            expiry_time = parser.isoparse(code_value['expiry_time'])
+                            if datetime.utcnow() <= expiry_time:
+                                self.main_page = MainPage()
+                                self.main_page.show()
+                                self.close()
+                                return
+                    QtWidgets.QMessageBox.warning(self, "Error", "Invalid or expired access code.")
+                except firebase_admin.exceptions.InvalidArgumentError as e:
+                    QtWidgets.QMessageBox.warning(self, "Error", f"Firebase error: {e}")
+                except Exception as e:
+                    QtWidgets.QMessageBox.warning(self, "Error", f"Unexpected error: {e}")
+            else:
+                QtWidgets.QMessageBox.warning(self, "Error", "Email and access code are required.")
+
+    def handle_forgot_password(self):
+        email = self.login_email.text()
+        if not email:
+            QtWidgets.QMessageBox.warning(self, "Error", "Email is required to reset password.")
+            return
+
+        send_otp(email)
+        QMessageBox.information(self, "OTP Sent", "An OTP has been sent to your email.")
+        dialog = ResetPasswordDialog(email)
+        if dialog.exec() == QtWidgets.QDialog.DialogCode.Accepted:
+            QtWidgets.QMessageBox.information(self, "Success", "Password has been reset successfully.")
+
+    def get_button_style(self):
+        return """
+            QPushButton {
+                background-color: #5A5A5A; 
+                color: #FFFFFF; 
+                padding: 1.5vw 2.5vw; 
+                border-radius: 5px;
+                font-size: 1vw;
+            }
+            QPushButton:hover {
+                background-color: #FFA500;
+            }
+            QPushButton:pressed {
+                background-color: #FF8C00;
+            }
+        """
+
 if __name__ == "__main__":
     app = QtWidgets.QApplication([])
-    window = MainPage()
+    window = AuthApp()
     window.show()
     app.exec()

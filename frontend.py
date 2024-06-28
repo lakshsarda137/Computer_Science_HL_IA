@@ -4,7 +4,6 @@ from fpdf import FPDF
 from PyQt6 import QtWidgets, QtCore
 from PyQt6.QtWidgets import QFileDialog, QMessageBox
 from email.mime.text import MIMEText
-from fpdf import FPDF, XPos, YPos
 import smtplib
 import random
 from dateutil import parser
@@ -199,7 +198,7 @@ class PaperGenerationWindow(QtWidgets.QWidget):
     def generate_paper_6(self):
         self.paper_6_window = Paper6Window()
         self.paper_6_window.show()
-        
+
 class Paper2Window(QtWidgets.QWidget):
     def __init__(self):
         super().__init__()
@@ -336,14 +335,14 @@ class Paper2Window(QtWidgets.QWidget):
         pdf = FPDF()
         pdf.add_page()
         pdf.set_font("helvetica", size=12)
-        pdf.cell(200, 10, text="Dummy Question Paper", new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='C')
+        pdf.cell(200, 10, txt="Dummy Question Paper", ln=True, align='C')
         pdf.ln(10)
-        pdf.cell(200, 10, text=f"Total Marks: {self.total_marks}", new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='L')
+        pdf.cell(200, 10, txt=f"Total Marks: {self.total_marks}", ln=True, align='L')
         pdf.ln(10)
 
         for topic, weightage in zip(self.topics, self.weightages):
             marks_assigned = (weightage / 100) * self.total_marks
-            pdf.cell(200, 10, text=f"Topic: {topic}, Weightage: {weightage}%, Marks: {marks_assigned:.2f}", new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='L')
+            pdf.cell(200, 10, txt=f"Topic: {topic}, Weightage: {weightage}%, Marks: {marks_assigned:.2f}", ln=True, align='L')
 
         pdf.output(filename)
 
@@ -367,357 +366,130 @@ class Paper2Window(QtWidgets.QWidget):
 
 # Rest of the code remains unchanged...
 
-
-
-
 class Paper4Window(QtWidgets.QWidget):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Generate Paper 4 (Theory)")
         self.setGeometry(100, 100, 800, 600)
-        self.total_marks = 0
-        self.weightages = []
-        self.keywords = []
-        self.topics = []
-
         layout = QtWidgets.QVBoxLayout()
 
         self.marks_input = QtWidgets.QLineEdit()
         self.marks_input.setPlaceholderText("Enter number of marks the paper should be for:")
-        self.marks_input.setMinimumHeight(35)
-        self.marks_input.textChanged.connect(self.update_marks)
         layout.addWidget(self.marks_input)
-
-        layout.addSpacerItem(QtWidgets.QSpacerItem(20, 50))
 
         self.keyword_choice = QtWidgets.QComboBox()
         self.keyword_choice.addItems(["Choose keyword", "Keyword 1", "Keyword 2", "Keyword 3"])
-        self.keyword_choice.setMinimumHeight(50)
         layout.addWidget(self.keyword_choice)
-
-        layout.addSpacerItem(QtWidgets.QSpacerItem(20, 50))
 
         self.keyword_weightage_input = QtWidgets.QLineEdit()
         self.keyword_weightage_input.setPlaceholderText("Enter weightage of keyword:")
-        self.keyword_weightage_input.setMinimumHeight(35)
         layout.addWidget(self.keyword_weightage_input)
-
-        layout.addSpacerItem(QtWidgets.QSpacerItem(20, 50))
 
         self.topic_choice = QtWidgets.QComboBox()
         self.topic_choice.addItems(["Choose topic", "Topic 1", "Topic 2", "Topic 3"])
-        self.topic_choice.setMinimumHeight(50)
         layout.addWidget(self.topic_choice)
-
-        layout.addSpacerItem(QtWidgets.QSpacerItem(20, 50))
 
         self.topic_weightage_input = QtWidgets.QLineEdit()
         self.topic_weightage_input.setPlaceholderText("Enter weightage of topic:")
-        self.topic_weightage_input.setMinimumHeight(35)
         layout.addWidget(self.topic_weightage_input)
 
-        layout.addSpacerItem(QtWidgets.QSpacerItem(20, 50))
+        self.process_button = QtWidgets.QPushButton("Process")
+        layout.addWidget(self.process_button)
+        self.process_button.clicked.connect(self.process_paper)
+
+        self.search_type_layout = QtWidgets.QHBoxLayout()
+        self.random_search_button = QtWidgets.QPushButton("Random")
+        self.prefer_recent_button = QtWidgets.QPushButton("Prefer recent")
+        self.search_type_layout.addWidget(self.random_search_button)
+        self.search_type_layout.addWidget(self.prefer_recent_button)
+        layout.addLayout(self.search_type_layout)
 
         self.add_topic_button = QtWidgets.QPushButton("Add new topic")
-        self.add_topic_button.setMinimumHeight(50)
-        self.add_topic_button.setStyleSheet(self.get_button_style())
-        self.add_topic_button.clicked.connect(self.add_topic)
         layout.addWidget(self.add_topic_button)
 
-        layout.addSpacerItem(QtWidgets.QSpacerItem(20, 50))
-
-        self.marks_generated_label = QtWidgets.QLabel("Marks generated: 0")
+        self.marks_generated_label = QtWidgets.QLabel("Marks generated:")
         layout.addWidget(self.marks_generated_label)
 
-        self.marks_remaining_label = QtWidgets.QLabel("Marks remaining: 0")
+        self.marks_remaining_label = QtWidgets.QLabel("Marks remaining:")
         layout.addWidget(self.marks_remaining_label)
-
-        layout.addSpacerItem(QtWidgets.QSpacerItem(20, 50))
-
-        self.process_button = QtWidgets.QPushButton("Process")
-        self.process_button.setStyleSheet(self.get_button_style())
-        self.process_button.setMinimumHeight(50)
-        self.process_button.setEnabled(False)
-        self.process_button.clicked.connect(self.process_paper)
-        layout.addWidget(self.process_button)
-
-        layout.addSpacerItem(QtWidgets.QSpacerItem(20, 50))
-
-        self.restart_button = QtWidgets.QPushButton("Restart Generation")
-        self.restart_button.setMinimumHeight(50)
-        self.restart_button.setStyleSheet(self.get_button_style())
-        self.restart_button.clicked.connect(self.restart_generation)
-        layout.addWidget(self.restart_button)
 
         self.setLayout(layout)
 
-    def get_button_style(self):
-        return """
-            QPushButton {
-                background-color: #5A5A5A;
-                color: #FFFFFF;
-                padding: 15px 30px;
-                border-radius: 10px;
-                font-size: 16px;
-                font-weight: bold;
-                border: 2px solid #5A5A5A;
-            }
-            QPushButton:hover {
-                background-color: #34ebb1;
-                border: 2px solid #34ebb1;
-            }
-            QPushButton:pressed {
-                background-color: #34ebb1;
-                border: 2px solid #34ebb1;
-            }
-        """
-
-    def update_marks(self):
-        try:
-            self.total_marks = int(self.marks_input.text())
-        except ValueError:
-            self.total_marks = 0
-        self.update_marks_remaining()
-
-    def add_topic(self):
-        try:
-            keyword_weightage = int(self.keyword_weightage_input.text())
-            topic_weightage = int(self.topic_weightage_input.text())
-            keyword = self.keyword_choice.currentText()
-            topic = self.topic_choice.currentText()
-        except ValueError:
-            QMessageBox.warning(self, "Input Error", "Please enter a valid number for weightage.")
-            return
-
-        potential_marks_generated = (sum(self.weightages) + keyword_weightage + topic_weightage) / 100 * self.total_marks
-
-        if potential_marks_generated > self.total_marks:
-            QMessageBox.warning(self, "Input Error", "You are trying to create a paper for more marks than you asked for!")
-            return
-
-        self.weightages.append(keyword_weightage)
-        self.weightages.append(topic_weightage)
-        self.keywords.append(keyword)
-        self.topics.append(topic)
-        self.update_marks_remaining()
-
-        if sum(self.weightages) == 100:
-            self.process_button.setEnabled(True)
-        else:
-            self.process_button.setEnabled(False)
-
-    def update_marks_remaining(self):
-        marks_generated = (sum(self.weightages) / 100) * self.total_marks
-        self.marks_generated_label.setText(f"Marks generated: {marks_generated:.2f}")
-        marks_remaining = self.total_marks - marks_generated
-        self.marks_remaining_label.setText(f"Marks remaining: {marks_remaining:.2f}")
-
     def process_paper(self):
+        options = QFileDialog.options()
         file_dialog = QFileDialog()
-        options = file_dialog.options()
         filename, _ = file_dialog.getSaveFileName(self, "Save PDF", "", "PDF Files (*.pdf);;All Files (*)", options=options)
         if filename:
             self.generate_dummy_pdf(filename)
-            self.upload_to_firebase(filename)
+            self.upload_to_firebase(os.path.basename(filename))
             QMessageBox.information(self, "Success", f"PDF generated and uploaded as {os.path.basename(filename)}")
 
     def generate_dummy_pdf(self, filename):
         pdf = FPDF()
         pdf.add_page()
-        pdf.set_font("helvetica", size=12)
-        pdf.cell(200, 10, text="Dummy Question Paper", new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='C')
-        pdf.ln(10)
-        pdf.cell(200, 10, text=f"Total Marks: {self.total_marks}", new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='L')
-        pdf.ln(10)
-
-        for keyword, topic, weightage in zip(self.keywords, self.topics, self.weightages):
-            marks_assigned = (weightage / 100) * self.total_marks
-            pdf.cell(200, 10, text=f"Keyword: {keyword}, Topic: {topic}, Weightage: {weightage}%, Marks: {marks_assigned:.2f}", new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='L')
-
+        pdf.set_font("Arial", size=12)
+        pdf.cell(200, 10, txt="Dummy Question Paper", ln=True, align='C')
         pdf.output(filename)
 
     def upload_to_firebase(self, filename):
         bucket = storage.bucket()
-        blob = bucket.blob(f'papers/{os.path.basename(filename)}')
+        blob = bucket.blob(f'papers/{filename}')
         blob.upload_from_filename(filename)
-
-    def restart_generation(self):
-        self.total_marks = 0
-        self.weightages.clear()
-        self.keywords.clear()
-        self.topics.clear()
-        self.marks_input.clear()
-        self.keyword_choice.setCurrentIndex(0)
-        self.keyword_weightage_input.clear()
-        self.topic_choice.setCurrentIndex(0)
-        self.topic_weightage_input.clear()
-        self.marks_generated_label.setText("Marks generated: 0")
-        self.marks_remaining_label.setText("Marks remaining: 0")
-        self.process_button.setEnabled(False)
 
 class Paper6Window(QtWidgets.QWidget):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Generate Paper 6 (Practical)")
         self.setGeometry(100, 100, 800, 600)
-        self.total_marks = 0
-        self.weightages = []
-        self.question_types = []
-
         layout = QtWidgets.QVBoxLayout()
 
         self.marks_input = QtWidgets.QLineEdit()
         self.marks_input.setPlaceholderText("Enter number of marks the paper should be for:")
-        self.marks_input.setMinimumHeight(35)
-        self.marks_input.textChanged.connect(self.update_marks)
         layout.addWidget(self.marks_input)
-
-        layout.addSpacerItem(QtWidgets.QSpacerItem(20, 50))
 
         self.question_type_choice = QtWidgets.QComboBox()
         self.question_type_choice.addItems(["Choose question number type", "Type 1", "Type 2", "Type 3"])
-        self.question_type_choice.setMinimumHeight(50)
         layout.addWidget(self.question_type_choice)
-
-        layout.addSpacerItem(QtWidgets.QSpacerItem(20, 50))
 
         self.weightage_input = QtWidgets.QLineEdit()
         self.weightage_input.setPlaceholderText("Enter weightage of question number type:")
-        self.weightage_input.setMinimumHeight(35)
         layout.addWidget(self.weightage_input)
 
-        layout.addSpacerItem(QtWidgets.QSpacerItem(20, 50))
+        self.process_button = QtWidgets.QPushButton("Process")
+        layout.addWidget(self.process_button)
+        self.process_button.clicked.connect(self.process_paper)
 
         self.add_type_button = QtWidgets.QPushButton("Add new type")
-        self.add_type_button.setMinimumHeight(50)
-        self.add_type_button.setStyleSheet(self.get_button_style())
-        self.add_type_button.clicked.connect(self.add_type)
         layout.addWidget(self.add_type_button)
 
-        layout.addSpacerItem(QtWidgets.QSpacerItem(20, 50))
-
-        self.marks_generated_label = QtWidgets.QLabel("Marks generated: 0")
+        self.marks_generated_label = QtWidgets.QLabel("Marks generated:")
         layout.addWidget(self.marks_generated_label)
 
-        self.marks_remaining_label = QtWidgets.QLabel("Marks remaining: 0")
+        self.marks_remaining_label = QtWidgets.QLabel("Marks remaining:")
         layout.addWidget(self.marks_remaining_label)
-
-        layout.addSpacerItem(QtWidgets.QSpacerItem(20, 50))
-
-        self.process_button = QtWidgets.QPushButton("Process")
-        self.process_button.setStyleSheet(self.get_button_style())
-        self.process_button.setMinimumHeight(50)
-        self.process_button.setEnabled(False)
-        self.process_button.clicked.connect(self.process_paper)
-        layout.addWidget(self.process_button)
-
-        layout.addSpacerItem(QtWidgets.QSpacerItem(20, 50))
-
-        self.restart_button = QtWidgets.QPushButton("Restart Generation")
-        self.restart_button.setMinimumHeight(50)
-        self.restart_button.setStyleSheet(self.get_button_style())
-        self.restart_button.clicked.connect(self.restart_generation)
-        layout.addWidget(self.restart_button)
 
         self.setLayout(layout)
 
-    def get_button_style(self):
-        return """
-            QPushButton {
-                background-color: #5A5A5A;
-                color: #FFFFFF;
-                padding: 15px 30px;
-                border-radius: 10px;
-                font-size: 16px;
-                font-weight: bold;
-                border: 2px solid #5A5A5A;
-            }
-            QPushButton:hover {
-                background-color: #34ebb1;
-                border: 2px solid #34ebb1;
-            }
-            QPushButton:pressed {
-                background-color: #34ebb1;
-                border: 2px solid #34ebb1;
-            }
-        """
-
-    def update_marks(self):
-        try:
-            self.total_marks = int(self.marks_input.text())
-        except ValueError:
-            self.total_marks = 0
-        self.update_marks_remaining()
-
-    def add_type(self):
-        try:
-            weightage = int(self.weightage_input.text())
-            question_type = self.question_type_choice.currentText()
-        except ValueError:
-            QMessageBox.warning(self, "Input Error", "Please enter a valid number for weightage.")
-            return
-
-        potential_marks_generated = (sum(self.weightages) + weightage) / 100 * self.total_marks
-
-        if potential_marks_generated > self.total_marks:
-            QMessageBox.warning(self, "Input Error", "You are trying to create a paper for more marks than you asked for!")
-            return
-
-        self.weightages.append(weightage)
-        self.question_types.append(question_type)
-        self.update_marks_remaining()
-
-        if sum(self.weightages) == 100:
-            self.process_button.setEnabled(True)
-        else:
-            self.process_button.setEnabled(False)
-
-    def update_marks_remaining(self):
-        marks_generated = (sum(self.weightages) / 100) * self.total_marks
-        self.marks_generated_label.setText(f"Marks generated: {marks_generated:.2f}")
-        marks_remaining = self.total_marks - marks_generated
-        self.marks_remaining_label.setText(f"Marks remaining: {marks_remaining:.2f}")
-
     def process_paper(self):
+        options = QFileDialog.options()
         file_dialog = QFileDialog()
-        options = file_dialog.options()
         filename, _ = file_dialog.getSaveFileName(self, "Save PDF", "", "PDF Files (*.pdf);;All Files (*)", options=options)
         if filename:
             self.generate_dummy_pdf(filename)
-            self.upload_to_firebase(filename)
+            self.upload_to_firebase(os.path.basename(filename))
             QMessageBox.information(self, "Success", f"PDF generated and uploaded as {os.path.basename(filename)}")
 
     def generate_dummy_pdf(self, filename):
         pdf = FPDF()
         pdf.add_page()
-        pdf.set_font("helvetica", size=12)
-        pdf.cell(200, 10, text="Dummy Question Paper", new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='C')
-        pdf.ln(10)
-        pdf.cell(200, 10, text=f"Total Marks: {self.total_marks}", new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='L')
-        pdf.ln(10)
-
-        for question_type, weightage in zip(self.question_types, self.weightages):
-            marks_assigned = (weightage / 100) * self.total_marks
-            pdf.cell(200, 10, text=f"Question Type: {question_type}, Weightage: {weightage}%, Marks: {marks_assigned:.2f}", new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='L')
-
+        pdf.set_font("Arial", size=12)
+        pdf.cell(200, 10, txt="Dummy Question Paper", ln=True, align='C')
         pdf.output(filename)
 
     def upload_to_firebase(self, filename):
         bucket = storage.bucket()
-        blob = bucket.blob(f'papers/{os.path.basename(filename)}')
+        blob = bucket.blob(f'papers/{filename}')
         blob.upload_from_filename(filename)
-
-    def restart_generation(self):
-        self.total_marks = 0
-        self.weightages.clear()
-        self.question_types.clear()
-        self.marks_input.clear()
-        self.question_type_choice.setCurrentIndex(0)
-        self.weightage_input.clear()
-        self.marks_generated_label.setText("Marks generated: 0")
-        self.marks_remaining_label.setText("Marks remaining: 0")
-        self.process_button.setEnabled(False)
-
 
 def send_otp(email):
     otp = ''.join(random.choices(string.digits, k=6))

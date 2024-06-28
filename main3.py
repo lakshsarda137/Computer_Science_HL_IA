@@ -741,7 +741,7 @@ class Paper2Window(QtWidgets.QWidget):
                         best_match = selected_unit_details[i]
                         best_topic = self.topics[i % len(self.topics)]
 
-                if max_score > 0.55 and marks_allocated[best_topic] < marks_needed[best_topic]:
+                if max_score > 0.58 and marks_allocated[best_topic] < marks_needed[best_topic]:
                     for pdf_file, extracted_questions in pdf_file_questions.items():
                         if question in extracted_questions:
                             pdf_path = os.path.join('past_papers', pdf_file)

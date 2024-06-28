@@ -20,13 +20,6 @@ from PIL import Image, ImageOps
 import pytesseract
 from sentence_transformers import SentenceTransformer, util
 import numpy as np
-
-os.environ["TOKENIZERS_PARALLELISM"] = "false"
-cred = credentials.Certificate('/Users/LakshSarda/Downloads/csia-acb9d-firebase-adminsdk-3rgsb-e4a48f992c.json')
-firebase_admin.initialize_app(cred, {
-    'databaseURL': 'https://csia-acb9d-default-rtdb.firebaseio.com',
-    'storageBucket': 'csia-acb9d.appspot.com'
-})
 syllabus_details = [
     ["1 States of matter",
         ["1.1 Solids, liquids and gases",
@@ -404,6 +397,13 @@ syllabus_details = [
     ]
 ]
 
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+cred = credentials.Certificate('/Users/LakshSarda/Downloads/csia-acb9d-firebase-adminsdk-3rgsb-e4a48f992c.json')
+firebase_admin.initialize_app(cred, {
+    'databaseURL': 'https://csia-acb9d-default-rtdb.firebaseio.com',
+    'storageBucket': 'csia-acb9d.appspot.com'
+})
+
 def hash_password(password):
     return hashlib.sha256(password.encode()).hexdigest()
 
@@ -527,16 +527,17 @@ class MainPage(QtWidgets.QWidget):
         self.about_page.show()
 
     def open_my_papers_page(self):
-        self.my_papers_page = MyPapersPage()
+        self.my_papers_page = MyPapersPage(self.user_email)
         self.my_papers_page.show()
 
     def show_paper_generation_options(self):
-        self.paper_gen_window = PaperGenerationWindow()
+        self.paper_gen_window = PaperGenerationWindow(self.user_email)
         self.paper_gen_window.show()
 
 class MyPapersPage(QtWidgets.QWidget):
-    def __init__(self):
+    def __init__(self, user_email):
         super().__init__()
+        self.user_email = user_email
         self.setWindowTitle("My Papers")
         self.setGeometry(100, 100, 800, 600)
         layout = QtWidgets.QVBoxLayout()
@@ -578,7 +579,7 @@ class MyPapersPage(QtWidgets.QWidget):
 
     def load_papers(self):
         self.papers_list.clear()
-        user_papers_ref = db.reference('user_papers')
+        user_papers_ref = db.reference(f'user_papers/{self.user_email.replace(".", ",")}')
         papers = user_papers_ref.get()
         self.papers = papers if papers else {}
         for key, paper in self.papers.items():
@@ -600,13 +601,14 @@ class MyPapersPage(QtWidgets.QWidget):
             QMessageBox.information(self, "Paper Details", details)
 
     def clear_history(self):
-        user_papers_ref = db.reference('user_papers')
+        user_papers_ref = db.reference(f'user_papers/{self.user_email.replace(".", ",")}')
         user_papers_ref.delete()
         self.load_papers()
 
 class PaperGenerationWindow(QtWidgets.QWidget):
-    def __init__(self):
+    def __init__(self, user_email):
         super().__init__()
+        self.user_email = user_email
         self.setWindowTitle("Paper Generation")
         self.setGeometry(100, 100, 800, 600)
         layout = QtWidgets.QVBoxLayout()
@@ -641,12 +643,13 @@ class PaperGenerationWindow(QtWidgets.QWidget):
         """
 
     def generate_paper_2(self):
-        self.paper_2_window = Paper2Window()
+        self.paper_2_window = Paper2Window(self.user_email)
         self.paper_2_window.show()
 
 class Paper2Window(QtWidgets.QWidget):
-    def __init__(self):
+    def __init__(self, user_email):
         super().__init__()
+        self.user_email = user_email
         self.setWindowTitle("Generate Paper 2 (MCQ)")
         self.setGeometry(100, 100, 800, 600)
         self.total_marks = 0
@@ -938,7 +941,7 @@ class Paper2Window(QtWidgets.QWidget):
         self.store_paper_details(filename)
 
     def store_paper_details(self, filename):
-        user_papers_ref = db.reference('user_papers')
+        user_papers_ref = db.reference(f'user_papers/{self.user_email.replace(".", ",")}')
         paper_details = {
             'filename': filename,
             'total_marks': self.total_marks,
@@ -1492,6 +1495,7 @@ class AuthApp(QtWidgets.QWidget):
                             expiry_time = parser.isoparse(code_value['expiry_time'])
                             if datetime.utcnow() <= expiry_time:
                                 self.main_page = MainPage()
+                                self.main_page.user_email = email  # Pass user email to MainPage
                                 self.main_page.show()
                                 self.close()
                                 return

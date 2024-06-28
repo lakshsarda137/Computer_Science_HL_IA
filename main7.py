@@ -20,13 +20,6 @@ from PIL import Image, ImageOps
 import pytesseract
 from sentence_transformers import SentenceTransformer, util
 import numpy as np
-
-os.environ["TOKENIZERS_PARALLELISM"] = "false"
-cred = credentials.Certificate('/Users/LakshSarda/Downloads/csia-acb9d-firebase-adminsdk-3rgsb-e4a48f992c.json')
-firebase_admin.initialize_app(cred, {
-    'databaseURL': 'https://csia-acb9d-default-rtdb.firebaseio.com',
-    'storageBucket': 'csia-acb9d.appspot.com'
-})
 syllabus_details = [
     ["1 States of matter",
         ["1.1 Solids, liquids and gases",
@@ -404,6 +397,12 @@ syllabus_details = [
     ]
 ]
 
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+cred = credentials.Certificate('/Users/LakshSarda/Downloads/csia-acb9d-firebase-adminsdk-3rgsb-e4a48f992c.json')
+firebase_admin.initialize_app(cred, {
+    'databaseURL': 'https://csia-acb9d-default-rtdb.firebaseio.com',
+    'storageBucket': 'csia-acb9d.appspot.com'
+})
 
 def hash_password(password):
     return hashlib.sha256(password.encode()).hexdigest()
@@ -464,32 +463,6 @@ class AboutPage(QtWidgets.QWidget):
         layout.addWidget(label)
         self.setLayout(layout)
 
-class MyPapersPage(QtWidgets.QWidget):
-    def __init__(self):
-        super().__init__()
-        self.setWindowTitle("My Papers")
-        self.setGeometry(100, 100, 600, 400)
-        layout = QtWidgets.QVBoxLayout()
-
-        self.papers_list = QtWidgets.QListWidget()
-        layout.addWidget(self.papers_list)
-
-        self.clear_history_button = QtWidgets.QPushButton("Clear History")
-        self.clear_history_button.clicked.connect(self.clear_history)
-        layout.addWidget(self.clear_history_button)
-
-        self.setLayout(layout)
-        self.load_papers()
-
-    def load_papers(self):
-        bucket = storage.bucket()
-        blobs = bucket.list_blobs(prefix='papers/')
-        for blob in blobs:
-            self.papers_list.addItem(blob.name)
-
-    def clear_history(self):
-        self.papers_list.clear()
-
 class MainPage(QtWidgets.QWidget):
     def __init__(self):
         super().__init__()
@@ -504,12 +477,6 @@ class MainPage(QtWidgets.QWidget):
         layout.addWidget(self.question_paper_button)
         self.question_paper_button.clicked.connect(self.show_paper_generation_options)
 
-        self.my_papers_button = QtWidgets.QPushButton("My Papers")
-        self.my_papers_button.setMinimumHeight(80)
-        self.my_papers_button.setStyleSheet(self.get_button_style())
-        layout.addWidget(self.my_papers_button)
-        self.my_papers_button.clicked.connect(self.open_my_papers_page)
-
         self.help_button = QtWidgets.QPushButton("Help")
         self.help_button.setMinimumHeight(80)
         self.help_button.setStyleSheet(self.get_button_style())
@@ -521,6 +488,18 @@ class MainPage(QtWidgets.QWidget):
         self.about_button.setStyleSheet(self.get_button_style())
         layout.addWidget(self.about_button)
         self.about_button.clicked.connect(self.open_about_page)
+
+        self.my_papers_button = QtWidgets.QPushButton("My Papers")
+        self.my_papers_button.setMinimumHeight(80)
+        self.my_papers_button.setStyleSheet(self.get_button_style())
+        layout.addWidget(self.my_papers_button)
+        self.my_papers_button.clicked.connect(self.open_my_papers_page)
+
+        self.whitelisted_users_button = QtWidgets.QPushButton("Whitelisted Users")
+        self.whitelisted_users_button.setMinimumHeight(80)
+        self.whitelisted_users_button.setStyleSheet(self.get_button_style())
+        layout.addWidget(self.whitelisted_users_button)
+        self.whitelisted_users_button.clicked.connect(self.open_whitelisted_users_page)
 
         self.setLayout(layout)
 
@@ -557,9 +536,118 @@ class MainPage(QtWidgets.QWidget):
         self.my_papers_page = MyPapersPage()
         self.my_papers_page.show()
 
+    def open_whitelisted_users_page(self):
+        self.whitelisted_users_page = WhitelistedUsersPage()
+        self.whitelisted_users_page.show()
+
     def show_paper_generation_options(self):
         self.paper_gen_window = PaperGenerationWindow()
         self.paper_gen_window.show()
+
+class MyPapersPage(QtWidgets.QWidget):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("My Papers")
+        self.setGeometry(100, 100, 800, 600)
+        layout = QtWidgets.QVBoxLayout()
+
+        self.papers_list = QtWidgets.QListWidget()
+        layout.addWidget(self.papers_list)
+        self.papers_list.itemClicked.connect(self.display_paper_details)
+
+        self.clear_history_button = QtWidgets.QPushButton("Clear History")
+        self.clear_history_button.setMinimumHeight(50)
+        self.clear_history_button.setStyleSheet(self.get_button_style())
+        self.clear_history_button.clicked.connect(self.clear_history)
+        layout.addWidget(self.clear_history_button)
+
+        self.load_papers()
+
+        self.setLayout(layout)
+
+    def get_button_style(self):
+        return """
+            QPushButton {
+                background-color: #5A5A5A;
+                color: #FFFFFF;
+                padding: 15px 30px;
+                border-radius: 10px;
+                font-size: 16px;
+                font-weight: bold;
+                border: 2px solid #5A5A5A;
+            }
+            QPushButton:hover {
+                background-color: #34ebb1;
+                border: 2px solid #34ebb1;
+            }
+            QPushButton:pressed {
+                background-color: #34ebb1;
+                border: 2px solid #34ebb1;
+            }
+        """
+
+    def load_papers(self):
+        self.papers_list.clear()
+        user_papers_ref = db.reference('user_papers')
+        papers = user_papers_ref.get()
+        self.papers = papers if papers else {}
+        for key, paper in self.papers.items():
+            item = QtWidgets.QListWidgetItem(os.path.basename(paper['filename']))
+            item.setData(QtCore.Qt.ItemDataRole.UserRole, key)
+            self.papers_list.addItem(item)
+
+    def display_paper_details(self, item):
+        paper_key = item.data(QtCore.Qt.ItemDataRole.UserRole)
+        paper_details = self.papers.get(paper_key)
+        if paper_details:
+            details = (
+                f"Filename: {os.path.basename(paper_details['filename'])}\n"
+                f"Total Marks: {paper_details['total_marks']}\n"
+                f"Topics: {', '.join(paper_details['topics'])}\n"
+                f"Weightages: {', '.join(map(str, paper_details['weightages']))}\n"
+                f"Timestamp: {paper_details['timestamp']}"
+            )
+            QMessageBox.information(self, "Paper Details", details)
+
+    def clear_history(self):
+        user_papers_ref = db.reference('user_papers')
+        user_papers_ref.delete()
+        self.load_papers()
+
+class WhitelistedUsersPage(QtWidgets.QWidget):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Whitelisted Users")
+        self.setGeometry(100, 100, 800, 600)
+        layout = QtWidgets.QVBoxLayout()
+
+        self.users_list = QtWidgets.QListWidget()
+        layout.addWidget(self.users_list)
+        self.users_list.itemClicked.connect(self.remove_user)
+
+        self.load_users()
+
+        self.setLayout(layout)
+
+    def load_users(self):
+        self.users_list.clear()
+        response = requests.get('http://127.0.0.1:5000/whitelisted_users')
+        if response.status_code == 200:
+            users = response.json()
+            for key, user in users.items():
+                item = QtWidgets.QListWidgetItem(user['email'])
+                item.setData(QtCore.Qt.ItemDataRole.UserRole, key)
+                self.users_list.addItem(item)
+
+    def remove_user(self, item):
+        user_key = item.data(QtCore.Qt.ItemDataRole.UserRole)
+        email = item.text()
+        response = requests.post('http://127.0.0.1:5000/remove_whitelisted_user', json={'email': email})
+        if response.status_code == 200:
+            QMessageBox.information(self, "Success", f"{email} has been removed from the whitelist.")
+            self.load_users()
+        else:
+            QMessageBox.warning(self, "Error", f"Failed to remove {email} from the whitelist.")
 
 class PaperGenerationWindow(QtWidgets.QWidget):
     def __init__(self):
@@ -624,7 +712,7 @@ class Paper2Window(QtWidgets.QWidget):
         self.topic_choice = QtWidgets.QComboBox()
         self.topic_choice.setMinimumHeight(50)
         
-        # List of units with their names
+        # Populate dropdown menu with units
         unit_options = [
             "1.1 Solids, liquids and gases",
             "1.2 Diffusion",
@@ -695,8 +783,8 @@ class Paper2Window(QtWidgets.QWidget):
         self.add_topic_button.clicked.connect(self.add_topic)
         layout.addWidget(self.add_topic_button)
 
-        self.random_toggle = QtWidgets.QCheckBox("Generate Randomly")
-        layout.addWidget(self.random_toggle)
+        self.random_generation_toggle = QtWidgets.QCheckBox("Generate Randomly")
+        layout.addWidget(self.random_generation_toggle)
 
         layout.addSpacerItem(QtWidgets.QSpacerItem(20, 50))
 
@@ -787,20 +875,9 @@ class Paper2Window(QtWidgets.QWidget):
         options = file_dialog.options()
         filename, _ = file_dialog.getSaveFileName(self, "Save PDF", "", "PDF Files (*.pdf);;All Files (*)", options=options)
         if filename:
-            if self.random_toggle.isChecked():
-                self.generate_custom_pdf_random(filename)
-            else:
-                self.generate_custom_pdf(filename)
+            self.generate_custom_pdf(filename)
             self.upload_to_firebase(filename)
             QMessageBox.information(self, "Success", f"PDF generated and uploaded as {os.path.basename(filename)}")
-
-    def populate_topic_choice(self):
-        self.topic_choice.addItem("Choose topic")
-        for unit in syllabus_details:
-            unit_number, unit_name = unit[0].split(' ', 1)
-            for subunit in unit[1:]:
-                subunit_number = subunit[0].split(' ')[0]
-                self.topic_choice.addItem(f"{unit_number}.{subunit_number} {unit_name}")
 
     def generate_custom_pdf(self, filename):
         selected_unit_details = []
@@ -830,102 +907,10 @@ class Paper2Window(QtWidgets.QWidget):
         marks_needed = {topic: (self.weightages[i] / 100) * self.total_marks for i, topic in enumerate(self.topics)}
         marks_allocated = {topic: 0 for topic in self.topics}
 
-        while question_marks < self.total_marks and question_marks < len(questions):
-            for question_index, question in enumerate(questions):
-                if question_index in processed_questions:
-                    continue
+        random_generation = self.random_generation_toggle.isChecked()
 
-                question_number = int(re.findall(r'^\d+', question)[0])
-                if question_number in [1, 2, 3, 4]:
-                    continue
-
-                if question in self.included_questions:
-                    continue
-
-                max_score = 0
-                best_match = None
-                best_topic = None
-
-                for i, score in enumerate(similarity_scores):
-                    if score[question_index] > max_score:
-                        max_score = score[question_index]
-                        best_match = selected_unit_details[i]
-                        best_topic = self.topics[i % len(self.topics)]
-
-                if max_score > 0.595 and marks_allocated[best_topic] < marks_needed[best_topic]:
-                    for pdf_file, extracted_questions in pdf_file_questions.items():
-                        if question in extracted_questions:
-                            pdf_path = os.path.join('past_papers', pdf_file)
-                            break
-
-                    coordinates = locate_question(pdf_path, question)
-                    if coordinates:
-                        short_question_id = hashlib.md5(question.encode()).hexdigest()[:8]
-                        output_pdf_path = f"output_{pdf_file}_{short_question_id}.pdf"
-                        if create_output_pdf(pdf_path, coordinates, output_pdf_path):
-                            img = Image.open(f"page_{coordinates['page_start']}.png")
-                            img = ImageOps.grayscale(img)
-                            extracted_text = pytesseract.image_to_string(img)
-                            word_count = len(extracted_text.split())
-                            question_number_count = len(re.findall(r'^\d+\s', extracted_text, re.MULTILINE))
-                            if word_count >= 10 and question_number_count == 1:
-                                paper_code = os.path.splitext(os.path.basename(pdf_path))[0]
-                                output_pdf_paths.append(output_pdf_path)
-                                matched_criteria.append((question, best_match, max_score, paper_code))
-                                question_marks += 1
-                                marks_allocated[best_topic] += 1
-                                processed_questions.add(question_index)
-                                self.included_questions.add(question)  # Add the question to the set
-                                print(f"Question: {question}\nMatched Syllabus Criteria: {best_match}\nCosine Similarity Score: {max_score:.4f}\nPaper Code: {paper_code}\n")
-                            else:
-                                os.remove(output_pdf_path)
-                    if question_marks >= self.total_marks:
-                        break
-
-        combined_output_pdf_path = filename
-        if output_pdf_paths:
-            combined_doc = fitz.open()
-            for path in output_pdf_paths:
-                combined_doc.insert_pdf(fitz.open(path))
-            combined_doc.save(combined_output_pdf_path)
-            combined_doc.close()
-
-            for path in output_pdf_paths:
-                if os.path.exists(path):
-                    os.remove(path)
-
-            print(f"Output PDF created at {combined_output_pdf_path}")
-        else:
-            print("Failed to create a combined output PDF. No valid questions found that meet the criteria.")
-
-    def generate_custom_pdf_random(self, filename):
-        selected_unit_details = []
-        for topic in self.topics:
-            for detail in syllabus_details:
-                if detail[0].startswith(topic.split('.')[0]):
-                    for sub_detail in detail[1:]:
-                        if sub_detail[0].startswith(topic):
-                            selected_unit_details.extend(sub_detail[1])
-
-        questions = []
-        pdf_files = [f for f in os.listdir('past_papers') if f.endswith('.pdf')]
-        random.shuffle(pdf_files)  # Shuffle the order of past papers
-        pdf_file_questions = {}
-
-        for pdf_file in pdf_files:
-            pdf_path = os.path.join('past_papers', pdf_file)
-            extracted_questions = extract_questions_from_pdf(pdf_path)
-            pdf_file_questions[pdf_file] = extracted_questions
-            questions.extend(extracted_questions)
-
-        similarity_scores = calculate_similarity_st(selected_unit_details, questions)
-
-        question_marks = 0
-        processed_questions = set()
-        output_pdf_paths = []
-        matched_criteria = []
-        marks_needed = {topic: (self.weightages[i] / 100) * self.total_marks for i, topic in enumerate(self.topics)}
-        marks_allocated = {topic: 0 for topic in self.topics}
+        if random_generation:
+            np.random.shuffle(questions)
 
         while question_marks < self.total_marks and question_marks < len(questions):
             for question_index, question in enumerate(questions):
@@ -994,6 +979,19 @@ class Paper2Window(QtWidgets.QWidget):
             print(f"Output PDF created at {combined_output_pdf_path}")
         else:
             print("Failed to create a combined output PDF. No valid questions found that meet the criteria.")
+
+        self.store_paper_details(filename)
+
+    def store_paper_details(self, filename):
+        user_papers_ref = db.reference('user_papers')
+        paper_details = {
+            'filename': filename,
+            'total_marks': self.total_marks,
+            'topics': self.topics,
+            'weightages': self.weightages,
+            'timestamp': datetime.utcnow().isoformat()
+        }
+        user_papers_ref.push(paper_details)
 
     def upload_to_firebase(self, filename):
         bucket = storage.bucket()
@@ -1572,15 +1570,15 @@ class AuthApp(QtWidgets.QWidget):
                 font-size: 1vw;
             }
             QPushButton:hover {
-                background-color: #FF8C00;
+                background-color: #FFA500;
             }
             QPushButton:pressed {
-                background-color: #FFA500;
+                background-color: #FF8C00;
             }
         """
 
 if __name__ == "__main__":
     app = QtWidgets.QApplication([])
-    auth_app = AuthApp()
-    auth_app.show()
+    window = AuthApp()
+    window.show()
     app.exec()

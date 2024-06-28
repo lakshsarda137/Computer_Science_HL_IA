@@ -20,13 +20,12 @@ from PIL import Image, ImageOps
 import pytesseract
 from sentence_transformers import SentenceTransformer, util
 import numpy as np
+from concurrent.futures import ThreadPoolExecutor
+import logging
 
-os.environ["TOKENIZERS_PARALLELISM"] = "false"
-cred = credentials.Certificate('/Users/LakshSarda/Downloads/csia-acb9d-firebase-adminsdk-3rgsb-e4a48f992c.json')
-firebase_admin.initialize_app(cred, {
-    'databaseURL': 'https://csia-acb9d-default-rtdb.firebaseio.com',
-    'storageBucket': 'csia-acb9d.appspot.com'
-})
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 syllabus_details = [
     ["1 States of matter",
         ["1.1 Solids, liquids and gases",
@@ -404,8 +403,21 @@ syllabus_details = [
     ]
 ]
 
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+cred = credentials.Certificate('/Users/LakshSarda/Downloads/csia-acb9d-firebase-adminsdk-3rgsb-e4a48f992c.json')
+firebase_admin.initialize_app(cred, {
+    'databaseURL': 'https://csia-acb9d-default-rtdb.firebaseio.com',
+    'storageBucket': 'csia-acb9d.appspot.com'
+})
+
 def hash_password(password):
     return hashlib.sha256(password.encode()).hexdigest()
+
+def open_image(image_path):
+    if not os.path.exists(image_path):
+        logger.warning(f"Image file '{image_path}' not found.")
+        return None
+    return Image.open(image_path)
 
 class AccessCodeDialog(QtWidgets.QDialog):
     def __init__(self):
@@ -527,16 +539,17 @@ class MainPage(QtWidgets.QWidget):
         self.about_page.show()
 
     def open_my_papers_page(self):
-        self.my_papers_page = MyPapersPage()
+        self.my_papers_page = MyPapersPage(self.user_email)
         self.my_papers_page.show()
 
     def show_paper_generation_options(self):
-        self.paper_gen_window = PaperGenerationWindow()
+        self.paper_gen_window = PaperGenerationWindow(self.user_email)
         self.paper_gen_window.show()
 
 class MyPapersPage(QtWidgets.QWidget):
-    def __init__(self):
+    def __init__(self, user_email):
         super().__init__()
+        self.user_email = user_email
         self.setWindowTitle("My Papers")
         self.setGeometry(100, 100, 800, 600)
         layout = QtWidgets.QVBoxLayout()
@@ -578,7 +591,7 @@ class MyPapersPage(QtWidgets.QWidget):
 
     def load_papers(self):
         self.papers_list.clear()
-        user_papers_ref = db.reference('user_papers')
+        user_papers_ref = db.reference(f'user_papers/{self.user_email.replace(".", ",")}')
         papers = user_papers_ref.get()
         self.papers = papers if papers else {}
         for key, paper in self.papers.items():
@@ -600,13 +613,14 @@ class MyPapersPage(QtWidgets.QWidget):
             QMessageBox.information(self, "Paper Details", details)
 
     def clear_history(self):
-        user_papers_ref = db.reference('user_papers')
+        user_papers_ref = db.reference(f'user_papers/{self.user_email.replace(".", ",")}')
         user_papers_ref.delete()
         self.load_papers()
 
 class PaperGenerationWindow(QtWidgets.QWidget):
-    def __init__(self):
+    def __init__(self, user_email):
         super().__init__()
+        self.user_email = user_email
         self.setWindowTitle("Paper Generation")
         self.setGeometry(100, 100, 800, 600)
         layout = QtWidgets.QVBoxLayout()
@@ -641,12 +655,13 @@ class PaperGenerationWindow(QtWidgets.QWidget):
         """
 
     def generate_paper_2(self):
-        self.paper_2_window = Paper2Window()
+        self.paper_2_window = Paper2Window(self.user_email)
         self.paper_2_window.show()
 
 class Paper2Window(QtWidgets.QWidget):
-    def __init__(self):
+    def __init__(self, user_email):
         super().__init__()
+        self.user_email = user_email
         self.setWindowTitle("Generate Paper 2 (MCQ)")
         self.setGeometry(100, 100, 800, 600)
         self.total_marks = 0
@@ -669,56 +684,57 @@ class Paper2Window(QtWidgets.QWidget):
         
         # Populate dropdown menu with units
         unit_options = [
-            "1.1 Solids, liquids and gases",
-            "1.2 Diffusion",
-            "2.1 Elements, compounds and mixtures",
-            "2.2 Atomic structure and the Periodic Table",
-            "2.3 Isotopes",
-            "2.4 Ions and ionic bonds",
-            "2.5 Simple molecules and covalent bonds",
-            "2.6 Giant covalent structures",
-            "2.7 Metallic bonding",
-            "3.1 Formulae",
-            "3.2 Relative masses of atoms and molecules",
-            "3.3 The mole and the Avogadro constant",
-            "4.1 Electrolysis",
-            "4.2 Hydrogen–oxygen fuel cells",
-            "5.1 Exothermic and endothermic reactions",
-            "6.1 Physical and chemical changes",
-            "6.2 Rate of reaction",
-            "6.3 Reversible reactions and equilibrium",
-            "6.4 Redox",
-            "7.1 The characteristic properties of acids and bases",
-            "7.2 Oxides",
-            "7.3 Preparation of salts",
-            "8.1 Arrangement of elements",
-            "8.2 Group I properties",
-            "8.3 Group VII properties",
-            "8.4 Transition elements",
-            "8.5 Noble gases",
-            "9.1 Properties of metals",
-            "9.2 Uses of metals",
-            "9.3 Alloys and their properties",
-            "9.4 Reactivity series",
-            "9.5 Corrosion of metals",
-            "9.6 Extraction of metals",
-            "10.1 Water",
-            "10.2 Fertilisers",
-            "10.3 Air quality and climate",
-            "11.1 Formulae, functional groups and terminology",
-            "11.2 Naming organic compounds",
-            "11.3 Fuels",
-            "11.4 Alkanes",
-            "11.5 Alkenes",
-            "11.6 Alcohols",
-            "11.7 Carboxylic acids",
-            "11.8 Polymers",
-            "12.1 Experimental design",
-            "12.2 Acid–base titrations",
-            "12.3 Chromatography",
-            "12.4 Separation and purification",
-            "12.5 Identification of ions and gases"
-        ]
+                "1.1 Solids, liquids and gases",
+                "1.2 Diffusion",
+                "2.1 Elements, compounds and mixtures",
+                "2.2 Atomic structure and the Periodic Table",
+                "2.3 Isotopes",
+                "2.4 Ions and ionic bonds",
+                "2.5 Simple molecules and covalent bonds",
+                "2.6 Giant covalent structures",
+                "2.7 Metallic bonding",
+                "3.1 Formulae",
+                "3.2 Relative masses of atoms and molecules",
+                "3.3 The mole and the Avogadro constant",
+                "4.1 Electrolysis",
+                "4.2 Hydrogen–oxygen fuel cells",
+                "5.1 Exothermic and endothermic reactions",
+                "6.1 Physical and chemical changes",
+                "6.2 Rate of reaction",
+                "6.3 Reversible reactions and equilibrium",
+                "6.4 Redox",
+                "7.1 The characteristic properties of acids and bases",
+                "7.2 Oxides",
+                "7.3 Preparation of salts",
+                "8.1 Arrangement of elements",
+                "8.2 Group I properties",
+                "8.3 Group VII properties",
+                "8.4 Transition elements",
+                "8.5 Noble gases",
+                "9.1 Properties of metals",
+                "9.2 Uses of metals",
+                "9.3 Alloys and their properties",
+                "9.4 Reactivity series",
+                "9.5 Corrosion of metals",
+                "9.6 Extraction of metals",
+                "10.1 Water",
+                "10.2 Fertilisers",
+                "10.3 Air quality and climate",
+                "11.1 Formulae, functional groups and terminology",
+                "11.2 Naming organic compounds",
+                "11.3 Fuels",
+                "11.4 Alkanes",
+                "11.5 Alkenes",
+                "11.6 Alcohols",
+                "11.7 Carboxylic acids",
+                "11.8 Polymers",
+                "12.1 Experimental design",
+                "12.2 Acid–base titrations",
+                "12.3 Chromatography",
+                "12.4 Separation and purification",
+                "12.5 Identification of ions and gases"
+            ]
+
 
         self.topic_choice.addItems(unit_options)
         layout.addWidget(self.topic_choice)
@@ -740,6 +756,11 @@ class Paper2Window(QtWidgets.QWidget):
 
         self.random_generation_toggle = QtWidgets.QCheckBox("Generate Randomly")
         layout.addWidget(self.random_generation_toggle)
+
+        layout.addSpacerItem(QtWidgets.QSpacerItem(20, 50))
+
+        self.periodic_table_toggle = QtWidgets.QCheckBox("Add Periodic Table at End")
+        layout.addWidget(self.periodic_table_toggle)
 
         layout.addSpacerItem(QtWidgets.QSpacerItem(20, 50))
 
@@ -837,6 +858,7 @@ class Paper2Window(QtWidgets.QWidget):
     def generate_custom_pdf(self, filename):
         selected_unit_details = []
         for topic in self.topics:
+            # Assume syllabus_details is already defined
             for detail in syllabus_details:
                 if detail[0].startswith(topic.split('.')[0]):
                     for sub_detail in detail[1:]:
@@ -844,14 +866,20 @@ class Paper2Window(QtWidgets.QWidget):
                             selected_unit_details.extend(sub_detail[1])
 
         questions = []
-        pdf_files = [f for f in os.listdir('past_papers') if f.endswith('.pdf')]
+        pdf_files = [f for f in os.listdir('Computer_Science_HL_IA/past_papers') if f.endswith('.pdf')]
         pdf_file_questions = {}
 
-        for pdf_file in pdf_files:
-            pdf_path = os.path.join('past_papers', pdf_file)
+        def extract_and_cache_questions(pdf_file):
+            pdf_path = os.path.join('Computer_Science_HL_IA/past_papers', pdf_file)
             extracted_questions = extract_questions_from_pdf(pdf_path)
             pdf_file_questions[pdf_file] = extracted_questions
-            questions.extend(extracted_questions)
+            return extracted_questions
+
+        with ThreadPoolExecutor() as executor:
+            questions_list = list(executor.map(extract_and_cache_questions, pdf_files))
+        
+        for q_list in questions_list:
+            questions.extend(q_list)
 
         similarity_scores = calculate_similarity_st(selected_unit_details, questions)
 
@@ -889,10 +917,10 @@ class Paper2Window(QtWidgets.QWidget):
                         best_match = selected_unit_details[i]
                         best_topic = self.topics[i % len(self.topics)]
 
-                if max_score > 0.595 and marks_allocated[best_topic] < marks_needed[best_topic]:
+                if max_score > 0.52 and marks_allocated[best_topic] < marks_needed[best_topic]:
                     for pdf_file, extracted_questions in pdf_file_questions.items():
                         if question in extracted_questions:
-                            pdf_path = os.path.join('past_papers', pdf_file)
+                            pdf_path = os.path.join('Computer_Science_HL_IA/past_papers', pdf_file)
                             break
 
                     coordinates = locate_question(pdf_path, question)
@@ -900,7 +928,10 @@ class Paper2Window(QtWidgets.QWidget):
                         short_question_id = hashlib.md5(question.encode()).hexdigest()[:8]
                         output_pdf_path = f"output_{pdf_file}_{short_question_id}.pdf"
                         if create_output_pdf(pdf_path, coordinates, output_pdf_path):
-                            img = Image.open(f"page_{coordinates['page_start']}.png")
+                            img = open_image(f"page_{coordinates['page_start']}.png")
+                            if img is None:
+                                continue
+
                             img = ImageOps.grayscale(img)
                             extracted_text = pytesseract.image_to_string(img)
                             word_count = len(extracted_text.split())
@@ -913,7 +944,7 @@ class Paper2Window(QtWidgets.QWidget):
                                 marks_allocated[best_topic] += 1
                                 processed_questions.add(question_index)
                                 self.included_questions.add(question)  # Add the question to the set
-                                print(f"Question: {question}\nMatched Syllabus Criteria: {best_match}\nCosine Similarity Score: {max_score:.4f}\nPaper Code: {paper_code}\n")
+                                logger.info(f"Question: {question}\nMatched Syllabus Criteria: {best_match}\nCosine Similarity Score: {max_score:.4f}\nPaper Code: {paper_code}\n")
                             else:
                                 os.remove(output_pdf_path)
                     if question_marks >= self.total_marks:
@@ -924,6 +955,13 @@ class Paper2Window(QtWidgets.QWidget):
             combined_doc = fitz.open()
             for path in output_pdf_paths:
                 combined_doc.insert_pdf(fitz.open(path))
+
+            # Add periodic table if the toggle is enabled
+            if self.periodic_table_toggle.isChecked():
+                periodic_table_pdf_path = self.get_periodic_table_pdf()
+                if periodic_table_pdf_path:
+                    combined_doc.insert_pdf(fitz.open(periodic_table_pdf_path))
+
             combined_doc.save(combined_output_pdf_path)
             combined_doc.close()
 
@@ -931,14 +969,46 @@ class Paper2Window(QtWidgets.QWidget):
                 if os.path.exists(path):
                     os.remove(path)
 
-            print(f"Output PDF created at {combined_output_pdf_path}")
+            logger.info(f"Output PDF created at {combined_output_pdf_path}")
         else:
-            print("Failed to create a combined output PDF. No valid questions found that meet the criteria.")
+            logger.info("Failed to create a combined output PDF. No valid questions found that meet the criteria.")
 
         self.store_paper_details(filename)
 
+    def get_periodic_table_pdf(self):
+        pdf_files = [f for f in os.listdir('Computer_Science_HL_IA/past_papers') if f.endswith('.pdf')]
+        if not pdf_files:
+            return None
+
+        last_page_screenshot = None
+        for pdf_file in pdf_files:
+            pdf_path = os.path.join('Computer_Science_HL_IA/past_papers', pdf_file)
+            doc = fitz.open(pdf_path)
+            last_page = doc[-1]
+            pix = last_page.get_pixmap()
+            last_page_screenshot = f"last_page_{pdf_file}.png"
+            pix.save(last_page_screenshot)
+            break
+
+        if not last_page_screenshot:
+            return None
+
+        periodic_table_pdf_path = "periodic_table.pdf"
+        c = canvas.Canvas(periodic_table_pdf_path)
+        img = open_image(last_page_screenshot)
+        if img:
+            img_width, img_height = img.size
+            c.setPageSize((img_width, img_height))
+            c.drawImage(last_page_screenshot, 0, 0, img_width, img_height)
+            c.showPage()
+            c.save()
+            os.remove(last_page_screenshot)
+            return periodic_table_pdf_path
+
+        return None
+
     def store_paper_details(self, filename):
-        user_papers_ref = db.reference('user_papers')
+        user_papers_ref = db.reference(f'user_papers/{self.user_email.replace(".", ",")}')
         paper_details = {
             'filename': filename,
             'total_marks': self.total_marks,
@@ -1092,7 +1162,10 @@ def create_output_pdf(pdf_path, coordinates, output_pdf_path):
         img_path = f"page_{page_num}.png"
         pix.save(img_path)
 
-        img = Image.open(img_path)
+        img = open_image(img_path)
+        if img is None:
+            continue
+
         img = ImageOps.grayscale(img)
         extracted_text = pytesseract.image_to_string(img)
         lines = extracted_text.split('\n')
@@ -1141,7 +1214,7 @@ def send_otp(email):
             server.login(sender_email, app_password)
             server.sendmail(sender_email, recipient_email, message.as_string())
     except Exception as e:
-        print("Failed to send email:", e)
+        logger.error("Failed to send email:", e)
 
 class ResetPasswordDialog(QtWidgets.QDialog):
     def __init__(self, email):
@@ -1445,7 +1518,7 @@ class AuthApp(QtWidgets.QWidget):
         ref = db.reference('users').order_by_child('email').equal_to(email).limit_to_last(1).get()
         user_data = next(iter(ref.values()), None)
 
-        print(f"user_data: {user_data}")
+        logger.info(f"user_data: {user_data}")
 
         if user_data and user_data.get('password') == password_hash:
             response = requests.post('http://127.0.0.1:5000/request_approval', json={'email': email})
@@ -1469,7 +1542,7 @@ class AuthApp(QtWidgets.QWidget):
         ref = db.reference('users').order_by_child('email').equal_to(email).limit_to_last(1).get()
         user_data = next(iter(ref.values()), None)
 
-        print(f"user_data: {user_data}")
+        logger.info(f"user_data: {user_data}")
 
         if user_data and user_data.get('password') == password_hash:
             self.access_code_button.setEnabled(True)
@@ -1492,6 +1565,7 @@ class AuthApp(QtWidgets.QWidget):
                             expiry_time = parser.isoparse(code_value['expiry_time'])
                             if datetime.utcnow() <= expiry_time:
                                 self.main_page = MainPage()
+                                self.main_page.user_email = email  # Pass user email to MainPage
                                 self.main_page.show()
                                 self.close()
                                 return

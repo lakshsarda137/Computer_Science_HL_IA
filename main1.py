@@ -3,10 +3,13 @@ import firebase_admin
 from firebase_admin import credentials, storage, db
 from fpdf import FPDF
 from PyQt6 import QtWidgets, QtCore
+import json
 from PyQt6.QtWidgets import QFileDialog, QMessageBox
 from email.mime.text import MIMEText
 import smtplib
 import random
+from PyQt6.QtWidgets import QDialog, QVBoxLayout, QLineEdit, QPushButton, QMessageBox
+import requests
 from dateutil import parser
 import string
 from datetime import datetime
@@ -26,6 +29,48 @@ import logging
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+class WhitelistedUsersPage(QtWidgets.QWidget):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Whitelisted Users")
+        self.setGeometry(100, 100, 800, 600)
+        layout = QtWidgets.QVBoxLayout()
+
+        self.users_list = QtWidgets.QListWidget()
+        layout.addWidget(self.users_list)
+        self.users_list.itemClicked.connect(self.confirm_removal)
+
+        self.load_whitelisted_users()
+
+        self.setLayout(layout)
+
+    def load_whitelisted_users(self):
+        response = requests.get('http://127.0.0.1:5000/whitelisted_users')
+        if response.status_code == 200:
+            users = response.json()
+            self.users_list.clear()
+            for key, user in users.items():
+                item = QtWidgets.QListWidgetItem(user['email'])
+                item.setData(QtCore.Qt.ItemDataRole.UserRole, key)
+                self.users_list.addItem(item)
+        else:
+            QtWidgets.QMessageBox.warning(self, "Error", "Failed to load whitelisted users.")
+
+    def confirm_removal(self, item):
+        email = item.text()
+        reply = QtWidgets.QMessageBox.question(self, 'Remove User', f"Are you sure you want to remove {email} from the whitelist?",
+                                               QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.No, QtWidgets.QMessageBox.StandardButton.No)
+        if reply == QtWidgets.QMessageBox.StandardButton.Yes:
+            self.remove_user(email)
+
+    def remove_user(self, email):
+        response = requests.delete('http://127.0.0.1:5000/whitelisted_users', json={'email': email})
+        if response.status_code == 200:
+            QtWidgets.QMessageBox.information(self, "Success", f"{email} has been removed from the whitelist.")
+            self.load_whitelisted_users()
+        else:
+            QtWidgets.QMessageBox.warning(self, "Error", f"Failed to remove {email} from the whitelist.")
 syllabus_details = [
     ["1 States of matter",
         ["1.1 Solids, liquids and gases",
@@ -419,18 +464,18 @@ def open_image(image_path):
         return None
     return Image.open(image_path)
 
-class AccessCodeDialog(QtWidgets.QDialog):
+class AccessCodeDialog(QDialog):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Enter Access Code")
         self.setGeometry(100, 100, 400, 200)
-        layout = QtWidgets.QVBoxLayout()
+        layout = QVBoxLayout()
 
-        self.access_code_input = QtWidgets.QLineEdit()
+        self.access_code_input = QLineEdit()
         self.access_code_input.setPlaceholderText("Enter Access Code")
         layout.addWidget(self.access_code_input)
 
-        self.verify_button = QtWidgets.QPushButton("Verify")
+        self.verify_button = QPushButton("Verify")
         self.verify_button.clicked.connect(self.verify_access_code)
         layout.addWidget(self.verify_button)
 
@@ -440,20 +485,22 @@ class AccessCodeDialog(QtWidgets.QDialog):
         access_code = self.access_code_input.text()
         if access_code:
             try:
-                response = requests.post('http://127.0.0.1:5000/verify_access_code', json={'access_code': access_code})
+                response = requests.post('http://127.0.0.1:5000/verify_access_code',
+                                         headers={"Content-Type": "application/json"},
+                                         data=json.dumps({'access_code': access_code}))
                 response.raise_for_status()
                 response_json = response.json()
                 if response.status_code == 200:
-                    QtWidgets.QMessageBox.information(self, "Success", "Access granted.")
+                    QMessageBox.information(self, "Success", "Access granted.")
                     self.accept()
                 else:
-                    QtWidgets.QMessageBox.warning(self, "Error", response_json.get('message', 'Invalid or expired access code.'))
+                    QMessageBox.warning(self, "Error", response_json.get('message', 'Invalid or expired access code.'))
             except requests.exceptions.RequestException as e:
-                QtWidgets.QMessageBox.warning(self, "Error", f"Server error: {e}")
+                QMessageBox.warning(self, "Error", f"Server error: {e}")
             except requests.exceptions.JSONDecodeError:
-                QtWidgets.QMessageBox.warning(self, "Error", "Invalid response from server.")
+                QMessageBox.warning(self, "Error", "Invalid response from server.")
         else:
-            QtWidgets.QMessageBox.warning(self, "Error", "Access code is required.")
+            QMessageBox.warning(self, "Error", "Access code is required.")
 
 class HelpPage(QtWidgets.QWidget):
     def __init__(self):
@@ -476,8 +523,9 @@ class AboutPage(QtWidgets.QWidget):
         self.setLayout(layout)
 
 class MainPage(QtWidgets.QWidget):
-    def __init__(self):
+    def __init__(self, user_email):
         super().__init__()
+        self.user_email = user_email
         self.initUI()
 
     def initUI(self):
@@ -545,6 +593,10 @@ class MainPage(QtWidgets.QWidget):
     def show_paper_generation_options(self):
         self.paper_gen_window = PaperGenerationWindow(self.user_email)
         self.paper_gen_window.show()
+
+    def open_whitelisted_users_page(self):
+        self.whitelisted_users_page = WhitelistedUsersPage()
+        self.whitelisted_users_page.show()
 
 class MyPapersPage(QtWidgets.QWidget):
     def __init__(self, user_email):
@@ -1176,7 +1228,7 @@ def create_output_pdf(pdf_path, coordinates, output_pdf_path):
 
         # Validation to discard images with less than 10 words, containing more than one question,
         # or containing less than 2 lines of text
-        if word_count < 10 or question_number_count != 1 or line_count < 2:
+        if word_count < 10 or question_number_count > 1 or line_count < 2:
             os.remove(img_path)
             continue
 
@@ -1191,7 +1243,6 @@ def create_output_pdf(pdf_path, coordinates, output_pdf_path):
         return True
     else:
         return False
-
 
 def send_otp(email):
     otp = ''.join(random.choices(string.digits, k=6))
@@ -1563,10 +1614,9 @@ class AuthApp(QtWidgets.QWidget):
                     access_codes = ref.order_by_child('email').equal_to(email).get()
                     for code_key, code_value in access_codes.items():
                         if code_value['access_code'] == access_code:
-                            expiry_time = parser.isoparse(code_value['expiry_time'])
-                            if datetime.utcnow() <= expiry_time:
-                                self.main_page = MainPage()
-                                self.main_page.user_email = email  # Pass user email to MainPage
+                            expiry_time = code_value['expiry_time']
+                            if expiry_time == 'forever' or datetime.utcnow() <= parser.isoparse(expiry_time):
+                                self.main_page = MainPage(email)
                                 self.main_page.show()
                                 self.close()
                                 return

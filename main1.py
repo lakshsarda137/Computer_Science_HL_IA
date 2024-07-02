@@ -2,14 +2,11 @@ import os
 import firebase_admin
 from firebase_admin import credentials, storage, db
 from fpdf import FPDF
-from PyQt6 import QtWidgets, QtCore
-import json
+from PyQt6 import QtWidgets, QtCore, QtGui
 from PyQt6.QtWidgets import QFileDialog, QMessageBox
 from email.mime.text import MIMEText
 import smtplib
 import random
-from PyQt6.QtWidgets import QDialog, QVBoxLayout, QLineEdit, QPushButton, QMessageBox
-import requests
 from dateutil import parser
 import string
 from datetime import datetime
@@ -25,52 +22,6 @@ from sentence_transformers import SentenceTransformer, util
 import numpy as np
 from concurrent.futures import ThreadPoolExecutor
 import logging
-
-# Set up logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-class WhitelistedUsersPage(QtWidgets.QWidget):
-    def __init__(self):
-        super().__init__()
-        self.setWindowTitle("Whitelisted Users")
-        self.setGeometry(100, 100, 800, 600)
-        layout = QtWidgets.QVBoxLayout()
-
-        self.users_list = QtWidgets.QListWidget()
-        layout.addWidget(self.users_list)
-        self.users_list.itemClicked.connect(self.confirm_removal)
-
-        self.load_whitelisted_users()
-
-        self.setLayout(layout)
-
-    def load_whitelisted_users(self):
-        response = requests.get('http://127.0.0.1:5000/whitelisted_users')
-        if response.status_code == 200:
-            users = response.json()
-            self.users_list.clear()
-            for key, user in users.items():
-                item = QtWidgets.QListWidgetItem(user['email'])
-                item.setData(QtCore.Qt.ItemDataRole.UserRole, key)
-                self.users_list.addItem(item)
-        else:
-            QtWidgets.QMessageBox.warning(self, "Error", "Failed to load whitelisted users.")
-
-    def confirm_removal(self, item):
-        email = item.text()
-        reply = QtWidgets.QMessageBox.question(self, 'Remove User', f"Are you sure you want to remove {email} from the whitelist?",
-                                               QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.No, QtWidgets.QMessageBox.StandardButton.No)
-        if reply == QtWidgets.QMessageBox.StandardButton.Yes:
-            self.remove_user(email)
-
-    def remove_user(self, email):
-        response = requests.delete('http://127.0.0.1:5000/whitelisted_users', json={'email': email})
-        if response.status_code == 200:
-            QtWidgets.QMessageBox.information(self, "Success", f"{email} has been removed from the whitelist.")
-            self.load_whitelisted_users()
-        else:
-            QtWidgets.QMessageBox.warning(self, "Error", f"Failed to remove {email} from the whitelist.")
 syllabus_details = [
     ["1 States of matter",
         ["1.1 Solids, liquids and gases",
@@ -448,6 +399,10 @@ syllabus_details = [
     ]
 ]
 
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 cred = credentials.Certificate('/Users/LakshSarda/Downloads/csia-acb9d-firebase-adminsdk-3rgsb-e4a48f992c.json')
 firebase_admin.initialize_app(cred, {
@@ -464,18 +419,18 @@ def open_image(image_path):
         return None
     return Image.open(image_path)
 
-class AccessCodeDialog(QDialog):
+class AccessCodeDialog(QtWidgets.QDialog):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Enter Access Code")
         self.setGeometry(100, 100, 400, 200)
-        layout = QVBoxLayout()
+        layout = QtWidgets.QVBoxLayout()
 
-        self.access_code_input = QLineEdit()
+        self.access_code_input = QtWidgets.QLineEdit()
         self.access_code_input.setPlaceholderText("Enter Access Code")
         layout.addWidget(self.access_code_input)
 
-        self.verify_button = QPushButton("Verify")
+        self.verify_button = QtWidgets.QPushButton("Verify")
         self.verify_button.clicked.connect(self.verify_access_code)
         layout.addWidget(self.verify_button)
 
@@ -485,22 +440,20 @@ class AccessCodeDialog(QDialog):
         access_code = self.access_code_input.text()
         if access_code:
             try:
-                response = requests.post('http://127.0.0.1:5000/verify_access_code',
-                                         headers={"Content-Type": "application/json"},
-                                         data=json.dumps({'access_code': access_code}))
+                response = requests.post('http://127.0.0.1:5000/verify_access_code', json={'access_code': access_code})
                 response.raise_for_status()
                 response_json = response.json()
                 if response.status_code == 200:
-                    QMessageBox.information(self, "Success", "Access granted.")
+                    QtWidgets.QMessageBox.information(self, "Success", "Access granted.")
                     self.accept()
                 else:
-                    QMessageBox.warning(self, "Error", response_json.get('message', 'Invalid or expired access code.'))
+                    QtWidgets.QMessageBox.warning(self, "Error", response_json.get('message', 'Invalid or expired access code.'))
             except requests.exceptions.RequestException as e:
-                QMessageBox.warning(self, "Error", f"Server error: {e}")
+                QtWidgets.QMessageBox.warning(self, "Error", f"Server error: {e}")
             except requests.exceptions.JSONDecodeError:
-                QMessageBox.warning(self, "Error", "Invalid response from server.")
+                QtWidgets.QMessageBox.warning(self, "Error", "Invalid response from server.")
         else:
-            QMessageBox.warning(self, "Error", "Access code is required.")
+            QtWidgets.QMessageBox.warning(self, "Error", "Access code is required.")
 
 class HelpPage(QtWidgets.QWidget):
     def __init__(self):
@@ -523,9 +476,8 @@ class AboutPage(QtWidgets.QWidget):
         self.setLayout(layout)
 
 class MainPage(QtWidgets.QWidget):
-    def __init__(self, user_email):
+    def __init__(self):
         super().__init__()
-        self.user_email = user_email
         self.initUI()
 
     def initUI(self):
@@ -593,10 +545,6 @@ class MainPage(QtWidgets.QWidget):
     def show_paper_generation_options(self):
         self.paper_gen_window = PaperGenerationWindow(self.user_email)
         self.paper_gen_window.show()
-
-    def open_whitelisted_users_page(self):
-        self.whitelisted_users_page = WhitelistedUsersPage()
-        self.whitelisted_users_page.show()
 
 class MyPapersPage(QtWidgets.QWidget):
     def __init__(self, user_email):
@@ -726,10 +674,15 @@ class Paper2Window(QtWidgets.QWidget):
         self.marks_input = QtWidgets.QLineEdit()
         self.marks_input.setPlaceholderText("Enter number of marks the paper should be for:")
         self.marks_input.setMinimumHeight(35)
-        self.marks_input.textChanged.connect(self.update_marks)
         layout.addWidget(self.marks_input)
 
-        layout.addSpacerItem(QtWidgets.QSpacerItem(20, 50))
+        self.confirm_marks_button = QtWidgets.QPushButton("Confirm Marks")
+        self.confirm_marks_button.setMinimumHeight(50)
+        self.confirm_marks_button.setStyleSheet(self.get_button_style())
+        self.confirm_marks_button.clicked.connect(self.confirm_marks)
+        layout.addWidget(self.confirm_marks_button)
+
+        layout.addSpacerItem(QtWidgets.QSpacerItem(20, 20))
 
         self.topic_choice = QtWidgets.QComboBox()
         self.topic_choice.setMinimumHeight(50)
@@ -787,42 +740,54 @@ class Paper2Window(QtWidgets.QWidget):
                 "12.5 Identification of ions and gases"
             ]
 
-
         self.topic_choice.addItems(unit_options)
+        self.topic_choice.setEnabled(False)
         layout.addWidget(self.topic_choice)
 
-        layout.addSpacerItem(QtWidgets.QSpacerItem(20, 50))
+        layout.addSpacerItem(QtWidgets.QSpacerItem(20, 20))
 
         self.weightage_input = QtWidgets.QLineEdit()
         self.weightage_input.setPlaceholderText("Enter weightage of topic:")
         self.weightage_input.setMinimumHeight(35)
+        self.weightage_input.setEnabled(False)
         layout.addWidget(self.weightage_input)
 
-        layout.addSpacerItem(QtWidgets.QSpacerItem(20, 50))
+        layout.addSpacerItem(QtWidgets.QSpacerItem(20, 20))
 
         self.add_topic_button = QtWidgets.QPushButton("Add new topic")
         self.add_topic_button.setMinimumHeight(50)
         self.add_topic_button.setStyleSheet(self.get_button_style())
         self.add_topic_button.clicked.connect(self.add_topic)
+        self.add_topic_button.setEnabled(False)
         layout.addWidget(self.add_topic_button)
 
         self.random_generation_toggle = QtWidgets.QCheckBox("Generate Randomly")
+        self.random_generation_toggle.setEnabled(False)
         layout.addWidget(self.random_generation_toggle)
 
-        layout.addSpacerItem(QtWidgets.QSpacerItem(20, 50))
+        layout.addSpacerItem(QtWidgets.QSpacerItem(20, 20))
 
         self.periodic_table_toggle = QtWidgets.QCheckBox("Add Periodic Table at End")
+        self.periodic_table_toggle.setEnabled(False)
         layout.addWidget(self.periodic_table_toggle)
 
-        layout.addSpacerItem(QtWidgets.QSpacerItem(20, 50))
+        layout.addSpacerItem(QtWidgets.QSpacerItem(20, 20))
 
         self.marks_generated_label = QtWidgets.QLabel("Marks generated: 0")
         layout.addWidget(self.marks_generated_label)
 
+        self.marks_generated_progress = QtWidgets.QProgressBar()
+        self.marks_generated_progress.setMaximum(100)
+        layout.addWidget(self.marks_generated_progress)
+
         self.marks_remaining_label = QtWidgets.QLabel("Marks remaining: 0")
         layout.addWidget(self.marks_remaining_label)
 
-        layout.addSpacerItem(QtWidgets.QSpacerItem(20, 50))
+        self.marks_remaining_progress = QtWidgets.QProgressBar()
+        self.marks_remaining_progress.setMaximum(100)
+        layout.addWidget(self.marks_remaining_progress)
+
+        layout.addSpacerItem(QtWidgets.QSpacerItem(20, 20))
 
         self.process_button = QtWidgets.QPushButton("Process")
         self.process_button.setStyleSheet(self.get_button_style())
@@ -831,7 +796,7 @@ class Paper2Window(QtWidgets.QWidget):
         self.process_button.clicked.connect(self.process_paper)
         layout.addWidget(self.process_button)
 
-        layout.addSpacerItem(QtWidgets.QSpacerItem(20, 50))
+        layout.addSpacerItem(QtWidgets.QSpacerItem(20, 20))
 
         self.restart_button = QtWidgets.QPushButton("Restart Generation")
         self.restart_button.setMinimumHeight(50)
@@ -862,12 +827,18 @@ class Paper2Window(QtWidgets.QWidget):
             }
         """
 
-    def update_marks(self):
+    def confirm_marks(self):
         try:
             self.total_marks = int(self.marks_input.text())
+            self.marks_input.setEnabled(False)
+            self.confirm_marks_button.setEnabled(False)
+            self.topic_choice.setEnabled(True)
+            self.weightage_input.setEnabled(True)
+            self.add_topic_button.setEnabled(True)
+            self.random_generation_toggle.setEnabled(True)
+            self.periodic_table_toggle.setEnabled(True)
         except ValueError:
-            self.total_marks = 0
-        self.update_marks_remaining()
+            QMessageBox.warning(self, "Input Error", "Please enter a valid number for marks.")
 
     def add_topic(self):
         try:
@@ -895,8 +866,11 @@ class Paper2Window(QtWidgets.QWidget):
     def update_marks_remaining(self):
         marks_generated = (sum(self.weightages) / 100) * self.total_marks
         self.marks_generated_label.setText(f"Marks generated: {marks_generated:.2f}")
+        self.marks_generated_progress.setValue(int((marks_generated / self.total_marks) * 100))
+
         marks_remaining = self.total_marks - marks_generated
         self.marks_remaining_label.setText(f"Marks remaining: {marks_remaining:.2f}")
+        self.marks_remaining_progress.setValue(int((marks_remaining / self.total_marks) * 100))
 
     def process_paper(self):
         file_dialog = QFileDialog()
@@ -1080,11 +1054,18 @@ class Paper2Window(QtWidgets.QWidget):
         self.weightages.clear()
         self.topics.clear()
         self.included_questions.clear()  # Reset the included questions set
+        self.marks_input.setEnabled(True)
         self.marks_input.clear()
-        self.topic_choice.setCurrentIndex(0)
-        self.weightage_input.clear()
+        self.confirm_marks_button.setEnabled(True)
+        self.topic_choice.setEnabled(False)
+        self.weightage_input.setEnabled(False)
+        self.add_topic_button.setEnabled(False)
+        self.random_generation_toggle.setEnabled(False)
+        self.periodic_table_toggle.setEnabled(False)
         self.marks_generated_label.setText("Marks generated: 0")
+        self.marks_generated_progress.setValue(0)
         self.marks_remaining_label.setText("Marks remaining: 0")
+        self.marks_remaining_progress.setValue(0)
         self.process_button.setEnabled(False)
 
 def extract_questions_from_pdf(pdf_path):
@@ -1602,63 +1583,52 @@ class AuthApp(QtWidgets.QWidget):
         else:
             QtWidgets.QMessageBox.warning(self, "Error", "Invalid email or password.")
 
-    def open_access_code_dialog(self):
-        dialog = AccessCodeDialog()
-        if dialog.exec() == QtWidgets.QDialog.DialogCode.Accepted:
-            access_code = dialog.access_code_input.text()
-            email = self.login_email.text()
-
-            if access_code and email:
-                try:
-                    ref = db.reference('access_codes')
-                    access_codes = ref.order_by_child('email').equal_to(email).get()
-                    for code_key, code_value in access_codes.items():
-                        if code_value['access_code'] == access_code:
-                            expiry_time = code_value['expiry_time']
-                            if expiry_time == 'forever' or datetime.utcnow() <= parser.isoparse(expiry_time):
-                                self.main_page = MainPage(email)
-                                self.main_page.show()
-                                self.close()
-                                return
-                    QtWidgets.QMessageBox.warning(self, "Error", "Invalid or expired access code.")
-                except firebase_admin.exceptions.InvalidArgumentError as e:
-                    QtWidgets.QMessageBox.warning(self, "Error", f"Firebase error: {e}")
-                except Exception as e:
-                    QtWidgets.QMessageBox.warning(self, "Error", f"Unexpected error: {e}")
-            else:
-                QtWidgets.QMessageBox.warning(self, "Error", "Email and access code are required.")
-
     def handle_forgot_password(self):
         email = self.login_email.text()
-        if not email:
-            QtWidgets.QMessageBox.warning(self, "Error", "Email is required to reset password.")
-            return
+        if email:
+            send_otp(email)
+            self.reset_password_dialog = ResetPasswordDialog(email)
+            self.reset_password_dialog.exec()
+        else:
+            QMessageBox.warning(self, "Input Error", "Email is required.")
 
-        send_otp(email)
-        QMessageBox.information(self, "OTP Sent", "An OTP has been sent to your email.")
-        dialog = ResetPasswordDialog(email)
-        if dialog.exec() == QtWidgets.QDialog.DialogCode.Accepted:
-            QtWidgets.QMessageBox.information(self, "Success", "Password has been reset successfully.")
+    def open_access_code_dialog(self):
+        self.access_code_dialog = AccessCodeDialog()
+        if self.access_code_dialog.exec() == QtWidgets.QDialog.DialogCode.Accepted:
+            self.open_main_page()
+
+    def open_main_page(self):
+        self.main_page = MainPage()
+        self.main_page.user_email = self.login_email.text()
+        self.main_page.show()
+        self.close()
 
     def get_button_style(self):
         return """
             QPushButton {
-                background-color: #5A5A5A; 
-                color: #FFFFFF; 
-                padding: 1.5vw 2.5vw; 
-                border-radius: 5px;
-                font-size: 1vw;
+                background-color: #5A5A5A;
+                color: #FFFFFF;
+                padding: 1vw 2vw;
+                border-radius: 10px;
+                font-size: 1.5vw;
+                font-weight: bold;
+                border: 2px solid #5A5A5A;
             }
             QPushButton:hover {
-                background-color: #FFA500;
+                background-color: #34ebb1;
+                border: 2px solid #34ebb1;
             }
             QPushButton:pressed {
-                background-color: #FF8C00;
+                background-color: #34ebb1;
+                border: 2px solid #34ebb1;
             }
         """
 
-if __name__ == "__main__":
+def main():
     app = QtWidgets.QApplication([])
-    window = AuthApp()
-    window.show()
+    auth_app = AuthApp()
+    auth_app.show()
     app.exec()
+
+if __name__ == '__main__':
+    main()

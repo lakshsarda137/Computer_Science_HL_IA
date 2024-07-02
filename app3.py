@@ -7,16 +7,20 @@ import string
 from datetime import datetime, timedelta
 from flask_cors import CORS
 from dateutil import parser
+import hashlib
 
 app = Flask(__name__)
 CORS(app)
 
-cred = credentials.Certificate('/Users/LakshSarda/Downloads/csia-acb9d-firebase-adminsdk-3rgsb-e4a48f992c.json')
-initialize_app(cred, {'databaseURL': 'https://csia-acb9d-default-rtdb.firebaseio.com'})
+cred = credentials.Certificate('/path/to/your/firebase/credentials.json')
+initialize_app(cred, {'databaseURL': 'https://your-database-url.firebaseio.com'})
+
+def hash_password(password):
+    return hashlib.sha256(password.encode()).hexdigest()
 
 def send_email(subject, body, to_email):
-    sender_email = "lakshsarda137@gmail.com"
-    app_password = "snft mjww smag kump"
+    sender_email = "your_email@gmail.com"
+    app_password = "your_email_app_password"
     message = MIMEText(body)
     message['Subject'] = subject
     message['From'] = sender_email
@@ -33,6 +37,10 @@ def send_email(subject, body, to_email):
 def generate_access_code():
     return ''.join(random.choices(string.ascii_letters + string.digits, k=8))
 
+@app.route('/login', methods=['POST'])
+def login():
+    data = request.json
+    email = data.get('email')
 @app.route('/request_approval', methods=['POST'])
 def request_approval():
     data = request.json

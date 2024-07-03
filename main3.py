@@ -2,7 +2,7 @@ import os
 import firebase_admin
 from firebase_admin import credentials, storage, db
 from fpdf import FPDF
-from PyQt6 import QtWidgets, QtCore
+from PyQt6 import QtWidgets, QtCore, QtGui
 from PyQt6.QtWidgets import QFileDialog, QMessageBox
 from email.mime.text import MIMEText
 import smtplib
@@ -20,14 +20,8 @@ from PIL import Image, ImageOps
 import pytesseract
 from sentence_transformers import SentenceTransformer, util
 import numpy as np
-
-os.environ["TOKENIZERS_PARALLELISM"] = "false"
-cred = credentials.Certificate('/Users/LakshSarda/Downloads/csia-acb9d-firebase-adminsdk-3rgsb-e4a48f992c.json')
-firebase_admin.initialize_app(cred, {
-    'databaseURL': 'https://csia-acb9d-default-rtdb.firebaseio.com',
-    'storageBucket': 'csia-acb9d.appspot.com'
-})
-
+from concurrent.futures import ThreadPoolExecutor
+import logging
 syllabus_details = [
     ["1 States of matter",
         ["1.1 Solids, liquids and gases",
@@ -405,9 +399,25 @@ syllabus_details = [
     ]
 ]
 
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+cred = credentials.Certificate('/Users/LakshSarda/Downloads/csia-acb9d-firebase-adminsdk-3rgsb-e4a48f992c.json')
+firebase_admin.initialize_app(cred, {
+    'databaseURL': 'https://csia-acb9d-default-rtdb.firebaseio.com',
+    'storageBucket': 'csia-acb9d.appspot.com'
+})
 
 def hash_password(password):
     return hashlib.sha256(password.encode()).hexdigest()
+
+def open_image(image_path):
+    if not os.path.exists(image_path):
+        logger.warning(f"Image file '{image_path}' not found.")
+        return None
+    return Image.open(image_path)
 
 class AccessCodeDialog(QtWidgets.QDialog):
     def __init__(self):
@@ -473,6 +483,9 @@ class MainPage(QtWidgets.QWidget):
     def initUI(self):
         layout = QtWidgets.QVBoxLayout()
 
+        self.back_button = create_back_button(self)
+        layout.addWidget(self.back_button, alignment=QtCore.Qt.AlignmentFlag.AlignRight)
+
         self.question_paper_button = QtWidgets.QPushButton("Generate Question Paper")
         self.question_paper_button.setMinimumHeight(80)
         self.question_paper_button.setStyleSheet(self.get_button_style())
@@ -490,6 +503,12 @@ class MainPage(QtWidgets.QWidget):
         self.about_button.setStyleSheet(self.get_button_style())
         layout.addWidget(self.about_button)
         self.about_button.clicked.connect(self.open_about_page)
+
+        self.my_papers_button = QtWidgets.QPushButton("My Papers")
+        self.my_papers_button.setMinimumHeight(80)
+        self.my_papers_button.setStyleSheet(self.get_button_style())
+        layout.addWidget(self.my_papers_button)
+        self.my_papers_button.clicked.connect(self.open_my_papers_page)
 
         self.setLayout(layout)
 
@@ -514,6 +533,10 @@ class MainPage(QtWidgets.QWidget):
             }
         """
 
+    def go_back(self):
+        self.close()
+
+
     def open_help_page(self):
         self.help_page = HelpPage()
         self.help_page.show()
@@ -522,16 +545,95 @@ class MainPage(QtWidgets.QWidget):
         self.about_page = AboutPage()
         self.about_page.show()
 
+    def open_my_papers_page(self):
+        self.my_papers_page = MyPapersPage(self.user_email)
+        self.my_papers_page.show()
+
     def show_paper_generation_options(self):
-        self.paper_gen_window = PaperGenerationWindow()
+        self.paper_gen_window = PaperGenerationWindow(self.user_email)
         self.paper_gen_window.show()
 
-class PaperGenerationWindow(QtWidgets.QWidget):
-    def __init__(self):
+class MyPapersPage(QtWidgets.QWidget):
+    def __init__(self, user_email):
         super().__init__()
+        self.user_email = user_email
+        self.setWindowTitle("My Papers")
+        self.setGeometry(100, 100, 800, 600)
+        layout = QtWidgets.QVBoxLayout()
+
+        self.papers_list = QtWidgets.QListWidget()
+        layout.addWidget(self.papers_list)
+        self.papers_list.itemClicked.connect(self.display_paper_details)
+
+        self.clear_history_button = QtWidgets.QPushButton("Clear History")
+        self.clear_history_button.setMinimumHeight(50)
+        self.clear_history_button.setStyleSheet(self.get_button_style())
+        self.clear_history_button.clicked.connect(self.clear_history)
+        layout.addWidget(self.clear_history_button)
+
+        self.load_papers()
+
+        self.setLayout(layout)
+
+    def get_button_style(self):
+        return """
+            QPushButton {
+                background-color: #5A5A5A;
+                color: #FFFFFF;
+                padding: 15px 30px;
+                border-radius: 10px;
+                font-size: 16px;
+                font-weight: bold;
+                border: 2px solid #5A5A5A;
+            }
+            QPushButton:hover {
+                background-color: #34ebb1;
+                border: 2px solid #34ebb1;
+            }
+            QPushButton:pressed {
+                background-color: #34ebb1;
+                border: 2px solid #34ebb1;
+            }
+        """
+
+    def load_papers(self):
+        self.papers_list.clear()
+        user_papers_ref = db.reference(f'user_papers/{self.user_email.replace(".", ",")}')
+        papers = user_papers_ref.get()
+        self.papers = papers if papers else {}
+        for key, paper in self.papers.items():
+            item = QtWidgets.QListWidgetItem(os.path.basename(paper['filename']))
+            item.setData(QtCore.Qt.ItemDataRole.UserRole, key)
+            self.papers_list.addItem(item)
+
+    def display_paper_details(self, item):
+        paper_key = item.data(QtCore.Qt.ItemDataRole.UserRole)
+        paper_details = self.papers.get(paper_key)
+        if paper_details:
+            details = (
+                f"Filename: {os.path.basename(paper_details['filename'])}\n"
+                f"Total Marks: {paper_details['total_marks']}\n"
+                f"Topics: {', '.join(paper_details['topics'])}\n"
+                f"Weightages: {', '.join(map(str, paper_details['weightages']))}\n"
+                f"Timestamp: {paper_details['timestamp']}"
+            )
+            QMessageBox.information(self, "Paper Details", details)
+
+    def clear_history(self):
+        user_papers_ref = db.reference(f'user_papers/{self.user_email.replace(".", ",")}')
+        user_papers_ref.delete()
+        self.load_papers()
+
+class PaperGenerationWindow(QtWidgets.QWidget):
+    def __init__(self, user_email):
+        super().__init__()
+        self.user_email = user_email
         self.setWindowTitle("Paper Generation")
         self.setGeometry(100, 100, 800, 600)
         layout = QtWidgets.QVBoxLayout()
+
+        self.back_button = create_back_button(self)
+        layout.addWidget(self.back_button, alignment=QtCore.Qt.AlignmentFlag.AlignRight)
 
         self.generate_paper_2_button = QtWidgets.QPushButton("Generate Paper 2 (MCQ)")
         self.generate_paper_2_button.setMinimumHeight(80)
@@ -562,58 +664,144 @@ class PaperGenerationWindow(QtWidgets.QWidget):
             }
         """
 
+    def go_back(self):
+        self.close()
+
+
     def generate_paper_2(self):
-        self.paper_2_window = Paper2Window()
+        self.paper_2_window = Paper2Window(self.user_email)
         self.paper_2_window.show()
 
 class Paper2Window(QtWidgets.QWidget):
-    def __init__(self):
+    def __init__(self, user_email):
         super().__init__()
+        self.user_email = user_email
         self.setWindowTitle("Generate Paper 2 (MCQ)")
         self.setGeometry(100, 100, 800, 600)
         self.total_marks = 0
         self.weightages = []
         self.topics = []
+        self.included_questions = set()  # Track included questions to avoid redundancy
 
         layout = QtWidgets.QVBoxLayout()
 
         self.marks_input = QtWidgets.QLineEdit()
         self.marks_input.setPlaceholderText("Enter number of marks the paper should be for:")
         self.marks_input.setMinimumHeight(35)
-        self.marks_input.textChanged.connect(self.update_marks)
         layout.addWidget(self.marks_input)
 
-        layout.addSpacerItem(QtWidgets.QSpacerItem(20, 50))
+        self.confirm_marks_button = QtWidgets.QPushButton("Confirm Marks")
+        self.confirm_marks_button.setMinimumHeight(50)
+        self.confirm_marks_button.setStyleSheet(self.get_button_style())
+        self.confirm_marks_button.clicked.connect(self.confirm_marks)
+        layout.addWidget(self.confirm_marks_button)
+
+        layout.addSpacerItem(QtWidgets.QSpacerItem(20, 20))
 
         self.topic_choice = QtWidgets.QComboBox()
-        self.topic_choice.addItems(["Choose topic"] + [f"{unit}.{subunit}" for unit in range(1, 13) for subunit in range(1, 8)])
         self.topic_choice.setMinimumHeight(50)
+        
+        # Populate dropdown menu with units
+        unit_options = [
+                "1.1 Solids, liquids and gases",
+                "1.2 Diffusion",
+                "2.1 Elements, compounds and mixtures",
+                "2.2 Atomic structure and the Periodic Table",
+                "2.3 Isotopes",
+                "2.4 Ions and ionic bonds",
+                "2.5 Simple molecules and covalent bonds",
+                "2.6 Giant covalent structures",
+                "2.7 Metallic bonding",
+                "3.1 Formulae",
+                "3.2 Relative masses of atoms and molecules",
+                "3.3 The mole and the Avogadro constant",
+                "4.1 Electrolysis",
+                "4.2 Hydrogen–oxygen fuel cells",
+                "5.1 Exothermic and endothermic reactions",
+                "6.1 Physical and chemical changes",
+                "6.2 Rate of reaction",
+                "6.3 Reversible reactions and equilibrium",
+                "6.4 Redox",
+                "7.1 The characteristic properties of acids and bases",
+                "7.2 Oxides",
+                "7.3 Preparation of salts",
+                "8.1 Arrangement of elements",
+                "8.2 Group I properties",
+                "8.3 Group VII properties",
+                "8.4 Transition elements",
+                "8.5 Noble gases",
+                "9.1 Properties of metals",
+                "9.2 Uses of metals",
+                "9.3 Alloys and their properties",
+                "9.4 Reactivity series",
+                "9.5 Corrosion of metals",
+                "9.6 Extraction of metals",
+                "10.1 Water",
+                "10.2 Fertilisers",
+                "10.3 Air quality and climate",
+                "11.1 Formulae, functional groups and terminology",
+                "11.2 Naming organic compounds",
+                "11.3 Fuels",
+                "11.4 Alkanes",
+                "11.5 Alkenes",
+                "11.6 Alcohols",
+                "11.7 Carboxylic acids",
+                "11.8 Polymers",
+                "12.1 Experimental design",
+                "12.2 Acid–base titrations",
+                "12.3 Chromatography",
+                "12.4 Separation and purification",
+                "12.5 Identification of ions and gases"
+            ]
+
+        self.topic_choice.addItems(unit_options)
+        self.topic_choice.setEnabled(False)
         layout.addWidget(self.topic_choice)
 
-        layout.addSpacerItem(QtWidgets.QSpacerItem(20, 50))
+        layout.addSpacerItem(QtWidgets.QSpacerItem(20, 20))
 
         self.weightage_input = QtWidgets.QLineEdit()
         self.weightage_input.setPlaceholderText("Enter weightage of topic:")
         self.weightage_input.setMinimumHeight(35)
+        self.weightage_input.setEnabled(False)
         layout.addWidget(self.weightage_input)
 
-        layout.addSpacerItem(QtWidgets.QSpacerItem(20, 50))
+        layout.addSpacerItem(QtWidgets.QSpacerItem(20, 20))
 
         self.add_topic_button = QtWidgets.QPushButton("Add new topic")
         self.add_topic_button.setMinimumHeight(50)
         self.add_topic_button.setStyleSheet(self.get_button_style())
         self.add_topic_button.clicked.connect(self.add_topic)
+        self.add_topic_button.setEnabled(False)
         layout.addWidget(self.add_topic_button)
 
-        layout.addSpacerItem(QtWidgets.QSpacerItem(20, 50))
+        self.random_generation_toggle = QtWidgets.QCheckBox("Generate Randomly")
+        self.random_generation_toggle.setEnabled(False)
+        layout.addWidget(self.random_generation_toggle)
+
+        layout.addSpacerItem(QtWidgets.QSpacerItem(20, 20))
+
+        self.periodic_table_toggle = QtWidgets.QCheckBox("Add Periodic Table at End")
+        self.periodic_table_toggle.setEnabled(False)
+        layout.addWidget(self.periodic_table_toggle)
+
+        layout.addSpacerItem(QtWidgets.QSpacerItem(20, 20))
 
         self.marks_generated_label = QtWidgets.QLabel("Marks generated: 0")
         layout.addWidget(self.marks_generated_label)
 
+        self.marks_generated_progress = QtWidgets.QProgressBar()
+        self.marks_generated_progress.setMaximum(100)
+        layout.addWidget(self.marks_generated_progress)
+
         self.marks_remaining_label = QtWidgets.QLabel("Marks remaining: 0")
         layout.addWidget(self.marks_remaining_label)
 
-        layout.addSpacerItem(QtWidgets.QSpacerItem(20, 50))
+        self.marks_remaining_progress = QtWidgets.QProgressBar()
+        self.marks_remaining_progress.setMaximum(100)
+        layout.addWidget(self.marks_remaining_progress)
+
+        layout.addSpacerItem(QtWidgets.QSpacerItem(20, 20))
 
         self.process_button = QtWidgets.QPushButton("Process")
         self.process_button.setStyleSheet(self.get_button_style())
@@ -622,7 +810,7 @@ class Paper2Window(QtWidgets.QWidget):
         self.process_button.clicked.connect(self.process_paper)
         layout.addWidget(self.process_button)
 
-        layout.addSpacerItem(QtWidgets.QSpacerItem(20, 50))
+        layout.addSpacerItem(QtWidgets.QSpacerItem(20, 20))
 
         self.restart_button = QtWidgets.QPushButton("Restart Generation")
         self.restart_button.setMinimumHeight(50)
@@ -653,12 +841,18 @@ class Paper2Window(QtWidgets.QWidget):
             }
         """
 
-    def update_marks(self):
+    def confirm_marks(self):
         try:
             self.total_marks = int(self.marks_input.text())
+            self.marks_input.setEnabled(False)
+            self.confirm_marks_button.setEnabled(False)
+            self.topic_choice.setEnabled(True)
+            self.weightage_input.setEnabled(True)
+            self.add_topic_button.setEnabled(True)
+            self.random_generation_toggle.setEnabled(True)
+            self.periodic_table_toggle.setEnabled(True)
         except ValueError:
-            self.total_marks = 0
-        self.update_marks_remaining()
+            QMessageBox.warning(self, "Input Error", "Please enter a valid number for marks.")
 
     def add_topic(self):
         try:
@@ -686,8 +880,11 @@ class Paper2Window(QtWidgets.QWidget):
     def update_marks_remaining(self):
         marks_generated = (sum(self.weightages) / 100) * self.total_marks
         self.marks_generated_label.setText(f"Marks generated: {marks_generated:.2f}")
+        self.marks_generated_progress.setValue(int((marks_generated / self.total_marks) * 100))
+
         marks_remaining = self.total_marks - marks_generated
         self.marks_remaining_label.setText(f"Marks remaining: {marks_remaining:.2f}")
+        self.marks_remaining_progress.setValue(int((marks_remaining / self.total_marks) * 100))
 
     def process_paper(self):
         file_dialog = QFileDialog()
@@ -701,6 +898,7 @@ class Paper2Window(QtWidgets.QWidget):
     def generate_custom_pdf(self, filename):
         selected_unit_details = []
         for topic in self.topics:
+            # Assume syllabus_details is already defined
             for detail in syllabus_details:
                 if detail[0].startswith(topic.split('.')[0]):
                     for sub_detail in detail[1:]:
@@ -708,14 +906,20 @@ class Paper2Window(QtWidgets.QWidget):
                             selected_unit_details.extend(sub_detail[1])
 
         questions = []
-        pdf_files = [f for f in os.listdir('past_papers') if f.endswith('.pdf')]
+        pdf_files = [f for f in os.listdir('Computer_Science_HL_IA/past_papers') if f.endswith('.pdf')]
         pdf_file_questions = {}
 
-        for pdf_file in pdf_files:
-            pdf_path = os.path.join('past_papers', pdf_file)
+        def extract_and_cache_questions(pdf_file):
+            pdf_path = os.path.join('Computer_Science_HL_IA/past_papers', pdf_file)
             extracted_questions = extract_questions_from_pdf(pdf_path)
             pdf_file_questions[pdf_file] = extracted_questions
-            questions.extend(extracted_questions)
+            return extracted_questions
+
+        with ThreadPoolExecutor() as executor:
+            questions_list = list(executor.map(extract_and_cache_questions, pdf_files))
+        
+        for q_list in questions_list:
+            questions.extend(q_list)
 
         similarity_scores = calculate_similarity_st(selected_unit_details, questions)
 
@@ -726,9 +930,21 @@ class Paper2Window(QtWidgets.QWidget):
         marks_needed = {topic: (self.weightages[i] / 100) * self.total_marks for i, topic in enumerate(self.topics)}
         marks_allocated = {topic: 0 for topic in self.topics}
 
+        random_generation = self.random_generation_toggle.isChecked()
+
+        if random_generation:
+            np.random.shuffle(questions)
+
         while question_marks < self.total_marks and question_marks < len(questions):
             for question_index, question in enumerate(questions):
                 if question_index in processed_questions:
+                    continue
+
+                question_number = int(re.findall(r'^\d+', question)[0])
+                if question_number in [1, 2, 3, 4]:
+                    continue
+
+                if question in self.included_questions:
                     continue
 
                 max_score = 0
@@ -741,10 +957,10 @@ class Paper2Window(QtWidgets.QWidget):
                         best_match = selected_unit_details[i]
                         best_topic = self.topics[i % len(self.topics)]
 
-                if max_score > 0.58 and marks_allocated[best_topic] < marks_needed[best_topic]:
+                if max_score > 0.52 and marks_allocated[best_topic] < marks_needed[best_topic]:
                     for pdf_file, extracted_questions in pdf_file_questions.items():
                         if question in extracted_questions:
-                            pdf_path = os.path.join('past_papers', pdf_file)
+                            pdf_path = os.path.join('Computer_Science_HL_IA/past_papers', pdf_file)
                             break
 
                     coordinates = locate_question(pdf_path, question)
@@ -752,7 +968,10 @@ class Paper2Window(QtWidgets.QWidget):
                         short_question_id = hashlib.md5(question.encode()).hexdigest()[:8]
                         output_pdf_path = f"output_{pdf_file}_{short_question_id}.pdf"
                         if create_output_pdf(pdf_path, coordinates, output_pdf_path):
-                            img = Image.open(f"page_{coordinates['page_start']}.png")
+                            img = open_image(f"page_{coordinates['page_start']}.png")
+                            if img is None:
+                                continue
+
                             img = ImageOps.grayscale(img)
                             extracted_text = pytesseract.image_to_string(img)
                             word_count = len(extracted_text.split())
@@ -764,7 +983,8 @@ class Paper2Window(QtWidgets.QWidget):
                                 question_marks += 1
                                 marks_allocated[best_topic] += 1
                                 processed_questions.add(question_index)
-                                print(f"Question: {question}\nMatched Syllabus Criteria: {best_match}\nCosine Similarity Score: {max_score:.4f}\nPaper Code: {paper_code}\n")
+                                self.included_questions.add(question)  # Add the question to the set
+                                logger.info(f"Question: {question}\nMatched Syllabus Criteria: {best_match}\nCosine Similarity Score: {max_score:.4f}\nPaper Code: {paper_code}\n")
                             else:
                                 os.remove(output_pdf_path)
                     if question_marks >= self.total_marks:
@@ -775,6 +995,13 @@ class Paper2Window(QtWidgets.QWidget):
             combined_doc = fitz.open()
             for path in output_pdf_paths:
                 combined_doc.insert_pdf(fitz.open(path))
+
+            # Add periodic table if the toggle is enabled
+            if self.periodic_table_toggle.isChecked():
+                periodic_table_pdf_path = self.get_periodic_table_pdf()
+                if periodic_table_pdf_path:
+                    combined_doc.insert_pdf(fitz.open(periodic_table_pdf_path))
+
             combined_doc.save(combined_output_pdf_path)
             combined_doc.close()
 
@@ -782,10 +1009,54 @@ class Paper2Window(QtWidgets.QWidget):
                 if os.path.exists(path):
                     os.remove(path)
 
-            print(f"Output PDF created at {combined_output_pdf_path}")
+            logger.info(f"Output PDF created at {combined_output_pdf_path}")
         else:
-            print("Failed to create a combined output PDF. No valid questions found that meet the criteria.")
+            logger.info("Failed to create a combined output PDF. No valid questions found that meet the criteria.")
 
+        self.store_paper_details(filename)
+
+    def get_periodic_table_pdf(self):
+        pdf_files = [f for f in os.listdir('Computer_Science_HL_IA/past_papers') if f.endswith('.pdf')]
+        if not pdf_files:
+            return None
+
+        last_page_screenshot = None
+        for pdf_file in pdf_files:
+            pdf_path = os.path.join('Computer_Science_HL_IA/past_papers', pdf_file)
+            doc = fitz.open(pdf_path)
+            last_page = doc[-1]
+            pix = last_page.get_pixmap()
+            last_page_screenshot = f"last_page_{pdf_file}.png"
+            pix.save(last_page_screenshot)
+            break
+
+        if not last_page_screenshot:
+            return None
+
+        periodic_table_pdf_path = "periodic_table.pdf"
+        c = canvas.Canvas(periodic_table_pdf_path)
+        img = open_image(last_page_screenshot)
+        if img:
+            img_width, img_height = img.size
+            c.setPageSize((img_width, img_height))
+            c.drawImage(last_page_screenshot, 0, 0, img_width, img_height)
+            c.showPage()
+            c.save()
+            os.remove(last_page_screenshot)
+            return periodic_table_pdf_path
+
+        return None
+
+    def store_paper_details(self, filename):
+        user_papers_ref = db.reference(f'user_papers/{self.user_email.replace(".", ",")}')
+        paper_details = {
+            'filename': filename,
+            'total_marks': self.total_marks,
+            'topics': self.topics,
+            'weightages': self.weightages,
+            'timestamp': datetime.utcnow().isoformat()
+        }
+        user_papers_ref.push(paper_details)
 
     def upload_to_firebase(self, filename):
         bucket = storage.bucket()
@@ -796,11 +1067,19 @@ class Paper2Window(QtWidgets.QWidget):
         self.total_marks = 0
         self.weightages.clear()
         self.topics.clear()
+        self.included_questions.clear()  # Reset the included questions set
+        self.marks_input.setEnabled(True)
         self.marks_input.clear()
-        self.topic_choice.setCurrentIndex(0)
-        self.weightage_input.clear()
+        self.confirm_marks_button.setEnabled(True)
+        self.topic_choice.setEnabled(False)
+        self.weightage_input.setEnabled(False)
+        self.add_topic_button.setEnabled(False)
+        self.random_generation_toggle.setEnabled(False)
+        self.periodic_table_toggle.setEnabled(False)
         self.marks_generated_label.setText("Marks generated: 0")
+        self.marks_generated_progress.setValue(0)
         self.marks_remaining_label.setText("Marks remaining: 0")
+        self.marks_remaining_progress.setValue(0)
         self.process_button.setEnabled(False)
 
 def extract_questions_from_pdf(pdf_path):
@@ -907,7 +1186,6 @@ def locate_question(pdf_path, question):
         'page_end': page_number_end
     }
 
-
 def create_output_pdf(pdf_path, coordinates, output_pdf_path):
     doc = fitz.open(pdf_path)
     c = canvas.Canvas(output_pdf_path)
@@ -931,7 +1209,10 @@ def create_output_pdf(pdf_path, coordinates, output_pdf_path):
         img_path = f"page_{page_num}.png"
         pix.save(img_path)
 
-        img = Image.open(img_path)
+        img = open_image(img_path)
+        if img is None:
+            continue
+
         img = ImageOps.grayscale(img)
         extracted_text = pytesseract.image_to_string(img)
         lines = extracted_text.split('\n')
@@ -958,7 +1239,6 @@ def create_output_pdf(pdf_path, coordinates, output_pdf_path):
     else:
         return False
 
-
 def send_otp(email):
     otp = ''.join(random.choices(string.digits, k=6))
     ref = db.reference('otps')
@@ -981,7 +1261,7 @@ def send_otp(email):
             server.login(sender_email, app_password)
             server.sendmail(sender_email, recipient_email, message.as_string())
     except Exception as e:
-        print("Failed to send email:", e)
+        logger.error("Failed to send email:", e)
 
 class ResetPasswordDialog(QtWidgets.QDialog):
     def __init__(self, email):
@@ -1052,11 +1332,36 @@ class ResetPasswordDialog(QtWidgets.QDialog):
                 QMessageBox.warning(self, "Input Error", "Passwords do not match.")
         else:
             QMessageBox.warning(self, "Input Error", "Both fields are required.")
+def create_back_button(parent):
+    back_button = QtWidgets.QPushButton("Back")
+    back_button.setStyleSheet("""
+        QPushButton {
+            background-color: #FF4500;
+            color: #FFFFFF;
+            padding: 1vw 2vw;
+            border-radius: 10px;
+            font-size: 1.5vw;
+            font-weight: bold;
+            border: 2px solid #FF4500;
+        }
+        QPushButton:hover {
+            background-color: #FF6347;
+            border: 2px solid #FF6347;
+        }
+        QPushButton:pressed {
+            background-color: #FF6347;
+            border: 2px solid #FF6347;
+        }
+    """)
+    back_button.setFixedSize(100, 50)
+    back_button.clicked.connect(parent.go_back)
+    return back_button
 
 class AuthApp(QtWidgets.QWidget):
     def __init__(self):
         super().__init__()
         self.initUI()
+    
 
     def initUI(self):
         self.setWindowTitle("Application Title")
@@ -1068,6 +1373,9 @@ class AuthApp(QtWidgets.QWidget):
         title_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         title_label.setStyleSheet("font-size: 3vw; color: #FFFFFF; font-weight: bold;")
         main_layout.addWidget(title_label)
+
+        self.back_button = create_back_button(self)
+        main_layout.addWidget(self.back_button, alignment=QtCore.Qt.AlignmentFlag.AlignRight)
 
         self.tabs = QtWidgets.QTabWidget()
         self.tabs.setStyleSheet("""
@@ -1089,6 +1397,15 @@ class AuthApp(QtWidgets.QWidget):
         main_layout.addWidget(self.tabs)
 
         self.setLayout(main_layout)
+
+    def go_back(self):
+        # Handle back button action, e.g., navigate to the previous tab or close the app
+        if self.tabs.currentIndex() > 0:
+            self.tabs.setCurrentIndex(self.tabs.currentIndex() - 1)
+        else:
+            self.close()
+    
+
 
     def create_signup_tab(self):
         signup_tab = QtWidgets.QWidget()
@@ -1273,7 +1590,6 @@ class AuthApp(QtWidgets.QWidget):
         else:
             QMessageBox.warning(self, "Input Error", "All fields are required.")
 
-
     def handle_request_login(self):
         email = self.login_email.text()
         password = self.login_password.text()
@@ -1286,7 +1602,7 @@ class AuthApp(QtWidgets.QWidget):
         ref = db.reference('users').order_by_child('email').equal_to(email).limit_to_last(1).get()
         user_data = next(iter(ref.values()), None)
 
-        print(f"user_data: {user_data}")
+        logger.info(f"user_data: {user_data}")
 
         if user_data and user_data.get('password') == password_hash:
             response = requests.post('http://127.0.0.1:5000/request_approval', json={'email': email})
@@ -1310,7 +1626,7 @@ class AuthApp(QtWidgets.QWidget):
         ref = db.reference('users').order_by_child('email').equal_to(email).limit_to_last(1).get()
         user_data = next(iter(ref.values()), None)
 
-        print(f"user_data: {user_data}")
+        logger.info(f"user_data: {user_data}")
 
         if user_data and user_data.get('password') == password_hash:
             self.access_code_button.setEnabled(True)
@@ -1318,63 +1634,52 @@ class AuthApp(QtWidgets.QWidget):
         else:
             QtWidgets.QMessageBox.warning(self, "Error", "Invalid email or password.")
 
-    def open_access_code_dialog(self):
-        dialog = AccessCodeDialog()
-        if dialog.exec() == QtWidgets.QDialog.DialogCode.Accepted:
-            access_code = dialog.access_code_input.text()
-            email = self.login_email.text()
-
-            if access_code and email:
-                try:
-                    ref = db.reference('access_codes')
-                    access_codes = ref.order_by_child('email').equal_to(email).get()
-                    for code_key, code_value in access_codes.items():
-                        if code_value['access_code'] == access_code:
-                            expiry_time = parser.isoparse(code_value['expiry_time'])
-                            if datetime.utcnow() <= expiry_time:
-                                self.main_page = MainPage()
-                                self.main_page.show()
-                                self.close()
-                                return
-                    QtWidgets.QMessageBox.warning(self, "Error", "Invalid or expired access code.")
-                except firebase_admin.exceptions.InvalidArgumentError as e:
-                    QtWidgets.QMessageBox.warning(self, "Error", f"Firebase error: {e}")
-                except Exception as e:
-                    QtWidgets.QMessageBox.warning(self, "Error", f"Unexpected error: {e}")
-            else:
-                QtWidgets.QMessageBox.warning(self, "Error", "Email and access code are required.")
-
     def handle_forgot_password(self):
         email = self.login_email.text()
-        if not email:
-            QtWidgets.QMessageBox.warning(self, "Error", "Email is required to reset password.")
-            return
+        if email:
+            send_otp(email)
+            self.reset_password_dialog = ResetPasswordDialog(email)
+            self.reset_password_dialog.exec()
+        else:
+            QMessageBox.warning(self, "Input Error", "Email is required.")
 
-        send_otp(email)
-        QMessageBox.information(self, "OTP Sent", "An OTP has been sent to your email.")
-        dialog = ResetPasswordDialog(email)
-        if dialog.exec() == QtWidgets.QDialog.DialogCode.Accepted:
-            QtWidgets.QMessageBox.information(self, "Success", "Password has been reset successfully.")
+    def open_access_code_dialog(self):
+        self.access_code_dialog = AccessCodeDialog()
+        if self.access_code_dialog.exec() == QtWidgets.QDialog.DialogCode.Accepted:
+            self.open_main_page()
+
+    def open_main_page(self):
+        self.main_page = MainPage()
+        self.main_page.user_email = self.login_email.text()
+        self.main_page.show()
+        self.close()
 
     def get_button_style(self):
         return """
             QPushButton {
-                background-color: #5A5A5A; 
-                color: #FFFFFF; 
-                padding: 1.5vw 2.5vw; 
-                border-radius: 5px;
-                font-size: 1vw;
+                background-color: #5A5A5A;
+                color: #FFFFFF;
+                padding: 1vw 2vw;
+                border-radius: 10px;
+                font-size: 1.5vw;
+                font-weight: bold;
+                border: 2px solid #5A5A5A;
             }
             QPushButton:hover {
-                background-color: #FFA500;
+                background-color: #34ebb1;
+                border: 2px solid #34ebb1;
             }
             QPushButton:pressed {
-                background-color: #FF8C00;
+                background-color: #34ebb1;
+                border: 2px solid #34ebb1;
             }
         """
 
-if __name__ == "__main__":
+def main():
     app = QtWidgets.QApplication([])
-    window = AuthApp()
-    window.show()
+    auth_app = AuthApp()
+    auth_app.show()
     app.exec()
+
+if __name__ == '__main__':
+    main()

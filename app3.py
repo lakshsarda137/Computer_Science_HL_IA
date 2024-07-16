@@ -41,6 +41,18 @@ def generate_access_code():
 def login():
     data = request.json
     email = data.get('email')
+    password = data.get('password')
+    password_hash = hash_password(password)
+    ref = db.reference('users').order_by_child('email').equal_to(email).limit_to_last(1).get()
+    user_data = next(iter(ref.values()), None)
+
+    if user_data and user_data.get('password') == password_hash:
+        if email == 'laksh4740@gmail.com':
+            return jsonify({"message": "Superadmin login successful.", "superadmin": True}), 200
+        else:
+            return jsonify({"message": "Login successful.", "superadmin": False}), 200
+    return jsonify({"message": "Invalid email or password."}), 400
+
 @app.route('/request_approval', methods=['POST'])
 def request_approval():
     data = request.json

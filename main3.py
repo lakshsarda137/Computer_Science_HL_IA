@@ -7,6 +7,7 @@ from PyQt6.QtWidgets import QFileDialog, QMessageBox
 from email.mime.text import MIMEText
 import smtplib
 import random
+import matplotlib.pyplot as plt
 from dateutil import parser
 import string
 from datetime import datetime
@@ -483,9 +484,6 @@ class MainPage(QtWidgets.QWidget):
     def initUI(self):
         layout = QtWidgets.QVBoxLayout()
 
-        self.back_button = create_back_button(self)
-        layout.addWidget(self.back_button, alignment=QtCore.Qt.AlignmentFlag.AlignRight)
-
         self.question_paper_button = QtWidgets.QPushButton("Generate Question Paper")
         self.question_paper_button.setMinimumHeight(80)
         self.question_paper_button.setStyleSheet(self.get_button_style())
@@ -510,6 +508,12 @@ class MainPage(QtWidgets.QWidget):
         layout.addWidget(self.my_papers_button)
         self.my_papers_button.clicked.connect(self.open_my_papers_page)
 
+        self.my_statistics_button = QtWidgets.QPushButton("My Statistics")
+        self.my_statistics_button.setMinimumHeight(80)
+        self.my_statistics_button.setStyleSheet(self.get_button_style())
+        layout.addWidget(self.my_statistics_button)
+        self.my_statistics_button.clicked.connect(self.open_statistics_page)
+
         self.setLayout(layout)
 
     def get_button_style(self):
@@ -533,10 +537,6 @@ class MainPage(QtWidgets.QWidget):
             }
         """
 
-    def go_back(self):
-        self.close()
-
-
     def open_help_page(self):
         self.help_page = HelpPage()
         self.help_page.show()
@@ -552,6 +552,11 @@ class MainPage(QtWidgets.QWidget):
     def show_paper_generation_options(self):
         self.paper_gen_window = PaperGenerationWindow(self.user_email)
         self.paper_gen_window.show()
+
+    def open_statistics_page(self):
+        self.statistics_page = StatisticsPage(self.user_email)
+        self.statistics_page.show()
+
 
 class MyPapersPage(QtWidgets.QWidget):
     def __init__(self, user_email):
@@ -632,9 +637,6 @@ class PaperGenerationWindow(QtWidgets.QWidget):
         self.setGeometry(100, 100, 800, 600)
         layout = QtWidgets.QVBoxLayout()
 
-        self.back_button = create_back_button(self)
-        layout.addWidget(self.back_button, alignment=QtCore.Qt.AlignmentFlag.AlignRight)
-
         self.generate_paper_2_button = QtWidgets.QPushButton("Generate Paper 2 (MCQ)")
         self.generate_paper_2_button.setMinimumHeight(80)
         self.generate_paper_2_button.setStyleSheet(self.get_button_style())
@@ -663,10 +665,6 @@ class PaperGenerationWindow(QtWidgets.QWidget):
                 border: 2px solid #34ebb1;
             }
         """
-
-    def go_back(self):
-        self.close()
-
 
     def generate_paper_2(self):
         self.paper_2_window = Paper2Window(self.user_email)
@@ -885,10 +883,33 @@ class Paper2Window(QtWidgets.QWidget):
         marks_remaining = self.total_marks - marks_generated
         self.marks_remaining_label.setText(f"Marks remaining: {marks_remaining:.2f}")
         self.marks_remaining_progress.setValue(int((marks_remaining / self.total_marks) * 100))
+    def update_user_statistics(self):
+        email_safe = self.user_email.replace(".", ",")
+        user_stats_ref = db.reference(f'user_stats/{email_safe}/topics')
+        for i, topic in enumerate(self.topics):
+            topic_ref = user_stats_ref.child(topic.replace(".", ","))  # Ensure topic doesn't have illegal characters
+            topic_data = topic_ref.get()
+            if topic_data:
+                new_count = topic_data['count'] + 1
+                new_marks = topic_data['marks'] + (self.weightages[i] / 100) * self.total_marks
+                topic_ref.update({
+                    'count': new_count,
+                    'marks': new_marks
+                })
+            else:
+                topic_ref.set({
+                    'count': 1,
+                    'marks': (self.weightages[i] / 100) * self.total_marks
+            })
+
+
+
+
 
     def process_paper(self):
         file_dialog = QFileDialog()
         options = file_dialog.options()
+        self.update_user_statistics()
         filename, _ = file_dialog.getSaveFileName(self, "Save PDF", "", "PDF Files (*.pdf);;All Files (*)", options=options)
         if filename:
             self.generate_custom_pdf(filename)
@@ -1082,6 +1103,115 @@ class Paper2Window(QtWidgets.QWidget):
         self.marks_remaining_progress.setValue(0)
         self.process_button.setEnabled(False)
 
+class StatisticsPage(QtWidgets.QWidget):
+    def __init__(self, user_email):
+        super().__init__()
+        self.user_email = user_email
+        self.setWindowTitle("My Statistics")
+        self.setGeometry(100, 100, 800, 600)
+        layout = QtWidgets.QVBoxLayout()
+
+        self.chart_label = QtWidgets.QLabel()
+        layout.addWidget(self.chart_label)
+
+        self.see_detailed_report_button = QtWidgets.QPushButton("See Detailed Report")
+        self.see_detailed_report_button.setMinimumHeight(50)
+        self.see_detailed_report_button.setStyleSheet(self.get_button_style())
+        self.see_detailed_report_button.clicked.connect(self.download_detailed_report)
+        layout.addWidget(self.see_detailed_report_button)
+
+        self.setLayout(layout)
+        self.display_statistics()
+
+    def get_button_style(self):
+        return """
+            QPushButton {
+                background-color: #5A5A5A;
+                color: #FFFFFF;
+                padding: 15px 30px;
+                border-radius: 10px;
+                font-size: 16px;
+                font-weight: bold;
+                border: 2px solid #5A5A5A;
+            }
+            QPushButton:hover {
+                background-color: #34ebb1;
+                border: 2px solid #34ebb1;
+            }
+            QPushButton:pressed {
+                background-color: #34ebb1;
+                border: 2px solid #34ebb1;
+            }
+        """
+
+    def display_statistics(self):
+        email_safe = self.user_email.replace(".", ",")
+        user_stats_ref = db.reference(f'user_stats/{email_safe}/topics')
+        stats = user_stats_ref.get()
+        if not stats:
+            QtWidgets.QMessageBox.information(self, "No Data", "No statistics available for this user.")
+            return
+
+        topics = sorted(stats.items(), key=lambda x: x[1]['marks'], reverse=True)[:5]
+        topics_names = [topic[0] for topic in topics]
+        marks = [topic[1]['marks'] for topic in topics]
+
+        fig, ax = plt.subplots()
+        ax.barh(topics_names, marks, color='skyblue')
+        ax.set_xlabel('Marks')
+        ax.set_title('Top 5 Most Frequently Generated Topics')
+        plt.tight_layout()
+        self.chart_label.setPixmap(self.convert_fig_to_pixmap(fig))
+
+    def convert_fig_to_pixmap(self, fig):
+        import io
+        buf = io.BytesIO()
+        fig.savefig(buf, format='png')
+        buf.seek(0)
+        img = Image.open(buf)
+        qimage = QtGui.QImage(img.tobytes("raw", "RGBA"), img.size[0], img.size[1], QtGui.QImage.Format.Format_RGBA8888)
+        return QtGui.QPixmap.fromImage(qimage)
+
+    def download_detailed_report(self):
+        email_safe = self.user_email.replace(".", ",")
+        user_stats_ref = db.reference(f'user_stats/{email_safe}/topics')
+        stats = user_stats_ref.get()
+        if not stats:
+            QtWidgets.QMessageBox.information(self, "No Data", "No statistics available for this user.")
+            return
+
+        topics = sorted(stats.items(), key=lambda x: x[1]['marks'], reverse=True)
+        topics_names = [topic[0] for topic in topics]
+        marks = [topic[1]['marks'] for topic in topics]
+
+        # Create a PDF
+        filename, _ = QFileDialog.getSaveFileName(self, "Save PDF", "", "PDF Files (*.pdf);;All Files (*)")
+        if filename:
+            self.generate_detailed_report_pdf(filename, topics_names, marks)
+            QtWidgets.QMessageBox.information(self, "Success", "Detailed report has been downloaded.")
+
+    def generate_detailed_report_pdf(self, filename, topics_names, marks):
+        pdf = FPDF()
+        pdf.add_page()
+        pdf.set_font("Arial", size=12)
+        pdf.cell(200, 10, txt="Detailed Report", ln=True, align='C')
+
+        pdf.cell(200, 10, txt="Marks for Each Topic", ln=True, align='L')
+        for topic, mark in zip(topics_names, marks):
+            pdf.cell(200, 10, txt=f"{topic}: {mark}", ln=True, align='L')
+
+        pdf.add_page()
+        # Add graphs for chapters and units
+        pdf.cell(200, 10, txt="Marks for Each Chapter", ln=True, align='L')
+        # Code to add chapter graphs
+
+        pdf.add_page()
+        pdf.cell(200, 10, txt="Marks for Each Unit", ln=True, align='L')
+        # Code to add unit graphs
+
+        pdf.output(filename)
+
+
 def extract_questions_from_pdf(pdf_path):
     doc = fitz.open(pdf_path)
     questions = []
@@ -1239,6 +1369,7 @@ def create_output_pdf(pdf_path, coordinates, output_pdf_path):
     else:
         return False
 
+
 def send_otp(email):
     otp = ''.join(random.choices(string.digits, k=6))
     ref = db.reference('otps')
@@ -1332,36 +1463,11 @@ class ResetPasswordDialog(QtWidgets.QDialog):
                 QMessageBox.warning(self, "Input Error", "Passwords do not match.")
         else:
             QMessageBox.warning(self, "Input Error", "Both fields are required.")
-def create_back_button(parent):
-    back_button = QtWidgets.QPushButton("Back")
-    back_button.setStyleSheet("""
-        QPushButton {
-            background-color: #FF4500;
-            color: #FFFFFF;
-            padding: 1vw 2vw;
-            border-radius: 10px;
-            font-size: 1.5vw;
-            font-weight: bold;
-            border: 2px solid #FF4500;
-        }
-        QPushButton:hover {
-            background-color: #FF6347;
-            border: 2px solid #FF6347;
-        }
-        QPushButton:pressed {
-            background-color: #FF6347;
-            border: 2px solid #FF6347;
-        }
-    """)
-    back_button.setFixedSize(100, 50)
-    back_button.clicked.connect(parent.go_back)
-    return back_button
 
 class AuthApp(QtWidgets.QWidget):
     def __init__(self):
         super().__init__()
         self.initUI()
-    
 
     def initUI(self):
         self.setWindowTitle("Application Title")
@@ -1369,13 +1475,10 @@ class AuthApp(QtWidgets.QWidget):
         self.showFullScreen()
         main_layout = QtWidgets.QVBoxLayout()
 
-        title_label = QtWidgets.QLabel("Welcome to Application!")
+        title_label = QtWidgets.QLabel("Welcome to Chemistry MCQ Generator!")
         title_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         title_label.setStyleSheet("font-size: 3vw; color: #FFFFFF; font-weight: bold;")
         main_layout.addWidget(title_label)
-
-        self.back_button = create_back_button(self)
-        main_layout.addWidget(self.back_button, alignment=QtCore.Qt.AlignmentFlag.AlignRight)
 
         self.tabs = QtWidgets.QTabWidget()
         self.tabs.setStyleSheet("""
@@ -1397,15 +1500,6 @@ class AuthApp(QtWidgets.QWidget):
         main_layout.addWidget(self.tabs)
 
         self.setLayout(main_layout)
-
-    def go_back(self):
-        # Handle back button action, e.g., navigate to the previous tab or close the app
-        if self.tabs.currentIndex() > 0:
-            self.tabs.setCurrentIndex(self.tabs.currentIndex() - 1)
-        else:
-            self.close()
-    
-
 
     def create_signup_tab(self):
         signup_tab = QtWidgets.QWidget()

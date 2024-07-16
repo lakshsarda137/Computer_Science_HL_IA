@@ -7,6 +7,7 @@ from PyQt6.QtWidgets import QFileDialog, QMessageBox
 from email.mime.text import MIMEText
 import smtplib
 import random
+from PyQt6.QtWidgets import QMainWindow, QToolBar, QAction
 from dateutil import parser
 import string
 from datetime import datetime
@@ -1330,7 +1331,7 @@ class AuthApp(QtWidgets.QWidget):
         self.showFullScreen()
         main_layout = QtWidgets.QVBoxLayout()
 
-        title_label = QtWidgets.QLabel("Welcome to Application!")
+        title_label = QtWidgets.QLabel("Welcome to Chemistry MCQ Generator!")
         title_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         title_label.setStyleSheet("font-size: 3vw; color: #FFFFFF; font-weight: bold;")
         main_layout.addWidget(title_label)

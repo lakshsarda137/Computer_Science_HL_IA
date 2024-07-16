@@ -626,6 +626,19 @@ class PaperGenerationWindow(QtWidgets.QWidget):
         self.setGeometry(100, 100, 800, 600)
         layout = QtWidgets.QVBoxLayout()
 
+        self.sets_input = QtWidgets.QLineEdit()
+        self.sets_input.setPlaceholderText("Enter number of sets you want:")
+        self.sets_input.setMinimumHeight(35)
+        layout.addWidget(self.sets_input)
+
+        self.confirm_sets_button = QtWidgets.QPushButton("Confirm Number of Sets")
+        self.confirm_sets_button.setMinimumHeight(50)
+        self.confirm_sets_button.setStyleSheet(self.get_button_style())
+        self.confirm_sets_button.clicked.connect(self.confirm_sets)
+        layout.addWidget(self.confirm_sets_button)
+
+        layout.addSpacerItem(QtWidgets.QSpacerItem(20, 20))
+
         self.generate_paper_2_button = QtWidgets.QPushButton("Generate Paper 2 (MCQ)")
         self.generate_paper_2_button.setMinimumHeight(80)
         self.generate_paper_2_button.setStyleSheet(self.get_button_style())
@@ -655,14 +668,22 @@ class PaperGenerationWindow(QtWidgets.QWidget):
             }
         """
 
-    def generate_paper_2(self):
-        self.paper_2_window = Paper2Window(self.user_email)
-        self.paper_2_window.show()
+    def confirm_sets(self):
+        try:
+            self.total_sets = int(self.sets_input.text())
+            self.sets_input.setEnabled(False)
+            self.confirm_sets_button.setEnabled(False)
+        except ValueError:
+            QMessageBox.warning(self, "Input Error", "Please enter a valid number for sets.")
 
+    def generate_paper_2(self):
+        self.paper_2_window = Paper2Window(self.user_email, self.total_sets)
+        self.paper_2_window.show()
 class Paper2Window(QtWidgets.QWidget):
-    def __init__(self, user_email):
+    def __init__(self, user_email, total_sets):
         super().__init__()
         self.user_email = user_email
+        self.total_sets = total_sets
         self.setWindowTitle("Generate Paper 2 (MCQ)")
         self.setGeometry(100, 100, 800, 600)
         self.total_marks = 0
@@ -805,13 +826,6 @@ class Paper2Window(QtWidgets.QWidget):
         self.restart_button.clicked.connect(self.restart_generation)
         layout.addWidget(self.restart_button)
 
-        self.loading_label = QtWidgets.QLabel("Loading: 0%")
-        layout.addWidget(self.loading_label)
-
-        self.loading_progress = QtWidgets.QProgressBar()
-        self.loading_progress.setMaximum(100)
-        layout.addWidget(self.loading_progress)
-
         self.setLayout(layout)
 
     def get_button_style(self):
@@ -885,13 +899,16 @@ class Paper2Window(QtWidgets.QWidget):
         options = file_dialog.options()
         filename, _ = file_dialog.getSaveFileName(self, "Save PDF", "", "PDF Files (*.pdf);;All Files (*)", options=options)
         if filename:
-            self.generate_custom_pdf(filename)
-            self.upload_to_firebase(filename)
-            QMessageBox.information(self, "Success", f"PDF generated and uploaded as {os.path.basename(filename)}")
+            for set_num in range(self.total_sets):
+                set_filename = f"{filename.rsplit('.', 1)[0]}_Set_{set_num + 1}.pdf"
+                self.generate_custom_pdf(set_filename)
+                self.upload_to_firebase(set_filename)
+            QMessageBox.information(self, "Success", f"PDFs generated and uploaded as {os.path.basename(filename)}")
 
     def generate_custom_pdf(self, filename):
         selected_unit_details = []
         for topic in self.topics:
+            # Assume syllabus_details is already defined
             for detail in syllabus_details:
                 if detail[0].startswith(topic.split('.')[0]):
                     for sub_detail in detail[1:]:
@@ -928,12 +945,7 @@ class Paper2Window(QtWidgets.QWidget):
         if random_generation:
             np.random.shuffle(questions)
 
-        total_questions = len(questions)
-        processed_count = 0
-
-        total_batches = total_questions // 10  # Assuming each batch processes 10 questions
-
-        while question_marks < self.total_marks and question_marks < total_questions:
+        while question_marks < self.total_marks and question_marks < len(questions):
             for question_index, question in enumerate(questions):
                 if question_index in processed_questions:
                     continue
@@ -987,11 +999,6 @@ class Paper2Window(QtWidgets.QWidget):
                                 os.remove(output_pdf_path)
                     if question_marks >= self.total_marks:
                         break
-
-                processed_count += 1
-                progress = int((processed_count / total_batches) * 100)
-                self.loading_label.setText(f"Loading: {progress}%")
-                self.loading_progress.setValue(progress)
 
         combined_output_pdf_path = filename
         if output_pdf_paths:
@@ -1084,11 +1091,6 @@ class Paper2Window(QtWidgets.QWidget):
         self.marks_remaining_label.setText("Marks remaining: 0")
         self.marks_remaining_progress.setValue(0)
         self.process_button.setEnabled(False)
-        self.loading_label.setText("Loading: 0%")
-        self.loading_progress.setValue(0)
-
-# The rest of the code remains the same
-
 
 def extract_questions_from_pdf(pdf_path):
     doc = fitz.open(pdf_path)
